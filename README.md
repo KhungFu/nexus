@@ -82,7 +82,7 @@ Repository klonen (oder Dateien manuell kopieren):
 
 Bash
 
-git clone https://github.com/KhungFu/nexus
+git clone https://github.com/KhungFu/nexus.git
 cd nexus
 Setup ausführen:
 
