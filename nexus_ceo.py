@@ -33,8 +33,8 @@ class NexusCEO:
 
     def load_doctrine_and_intel(self):
         doctrine_text = "Standard Doktrin: Handle vorsichtig."
-        if os.path.exists("toplam_egitim.txt"):
-            with open("toplam_egitim.txt", "r", encoding="utf-8", errors="ignore") as f: 
+        if os.path.exists("mentor_name.txt"):
+            with open("mentor_name.txt", "r", encoding="utf-8", errors="ignore") as f: 
                 doctrine_text = f.read()
         return doctrine_text
 
