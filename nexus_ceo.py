@@ -22,113 +22,149 @@ class NexusCEO:
         self.strategy = GeminiAnalyst()
         self.comm = TelegramBot()
         
-        # Intervalle gemäß deiner Anweisung
-        self.base_interval = 1800  # 30 Min Standard
-        self.error_interval = 3600 # 60 Min Pause bei API-Limit
-        self.budget_limit = 100.0
+        # Zeit-Intervalle (Personalisiert nach deinen Vorgaben)
+        self.base_interval = 1800  # 30 Minuten (Normaler autonomer Intervall)
+        self.error_interval = 3600 # 60 Minuten (Erhöhte Pause bei API-Limit)
         
-        # Marktfilter
-        self.survival_keywords = ["GOLD", "SILVER", "OIL", "BRENT", "COPPER", "GAS"]
-        self.crypto_keywords = ["BTC", "ETH", "XRP", "LTC", "SOL", "DOGE"]
+        self.budget_limit = 100.0  # Grenze für Survival Mode
+        
+        # Keywords für die Markt-Filterung
+        self.survival_keywords = ["GOLD", "SILVER", "OIL", "BRENT", "COPPER", "GAS", "COTTON"]
+        self.crypto_keywords = ["BTC", "ETH", "XRP", "LTC", "SOL", "DOGE", "BITCOIN", "ETHEREUM"]
 
     def load_doctrine_and_intel(self):
-        doctrine_text = "Standard Doktrin: Handle vorsichtig."
+        """Lädt die zentrale Doktrin aus mentor_name.txt und weitere Intel-Quellen."""
+        doctrine_text = "Standard Doktrin: Handle vorsichtig und otonom."
+        
+        # Prüfung auf mentor_name.txt (wie von dir gewünscht)
         if os.path.exists("mentor_name.txt"):
             with open("mentor_name.txt", "r", encoding="utf-8", errors="ignore") as f: 
                 doctrine_text = f.read()
-        return doctrine_text
+        
+        info_text = ""
+        files = glob.glob("*.txt")
+        for file in files:
+            if file == "mentor_name.txt": continue
+            with open(file, "r", encoding="utf-8", errors="ignore") as f: 
+                info_text += f"\nSOURCE {file}: {f.read()[:2000]}\n"
+        return doctrine_text, info_text
 
     def filter_market_data(self, mode):
-        if not os.path.exists('market_data.json'): return "Keine Marktdaten."
+        """Filtert die Marktdaten, um Token bei Gemini zu sparen."""
+        if not os.path.exists('market_data.json'): return "Keine Marktdaten vorhanden."
         try:
             with open('market_data.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            instruments = data.get('market_catalog', {}).get('instruments', [])
-            valid = []
+                full_data = json.load(f)
+            
+            instruments = full_data.get('market_catalog', {}).get('instruments', [])
+            valid_list = []
+            
             for inst in instruments:
-                name, epic = inst.get('instrumentName', '').upper(), inst.get('epic', '')
-                if mode == "CRYPTO_ONLY" and any(x in name or x in epic for x in self.crypto_keywords):
-                    valid.append(f"{name} ({epic})")
-                elif mode == "SURVIVAL" and any(x in name or x in epic for x in self.survival_keywords):
-                    valid.append(f"{name} ({epic})")
-                elif mode == "NORMAL":
-                    valid.append(f"{name} ({epic})")
-            return "\n".join(valid[:100])
-        except: return "Filterfehler."
+                name = inst.get('instrumentName', '').upper()
+                epic = inst.get('epic', '')
+                
+                if mode == "SURVIVAL":
+                    if any(x in name or x in epic for x in self.survival_keywords):
+                        valid_list.append(f"{name} (EPIC: {epic})")
+                elif mode == "CRYPTO_ONLY":
+                    if any(x in name or x in epic for x in self.crypto_keywords):
+                        valid_list.append(f"{name} (EPIC: {epic})")
+                else:
+                    valid_list.append(f"{name} (EPIC: {epic})")
+
+            return "\n".join(valid_list[:100])
+        except Exception as e:
+            return f"Fehler beim Filtern: {e}"
 
     def run_business_cycle(self):
         try:
             print(f"\n⏰ --- ZYKLUS START: {datetime.datetime.now().strftime('%H:%M')} ---")
             
-            # 1. STATUS HOLEN
+            # 1. STATUS HOLEN (Equity Check)
             state = self.ops.get_state()
-            if not state:
-                print(f"❌ API Fehler. Pause {self.error_interval//60} Min.")
+            if not state: 
+                print(f"❌ API-Fehler oder Limit erreicht. Erhöhe Pause auf {self.error_interval//60} Min.")
                 time.sleep(self.error_interval)
                 return
             
-            equity = float(state['balance'].get('amount', 0))
+            # Nutzt Equity (Bargeld + Gewinn/Verlust)
+            balance = float(state['balance'].get('amount', 0))
             positions = state['positions']
+            
             is_weekend = datetime.datetime.today().weekday() >= 5
             
             # 2. MODUS BESTIMMEN
             if is_weekend:
-                mode = "CRYPTO_ONLY" if equity > 0 else "IDLE"
-            elif equity < self.budget_limit:
+                if balance > 0:
+                    mode = "CRYPTO_ONLY"
+                    print(f"🎰 WOCHENENDE: Crypto-Modus aktiv (Equity: {balance}€).")
+                else:
+                    print(f"🛌 WOCHENENDE: Kein Guthaben ({balance}€). Ruhemodus.")
+                    return
+            elif balance < self.budget_limit:
                 mode = "SURVIVAL"
+                print(f"⚠️ SURVIVAL MODE: Equity {balance}€ unter {self.budget_limit}€. Nur Rohstoffe.")
             else:
                 mode = "NORMAL"
+                print(f"🚀 NORMALBETRIEB: Equity {balance}€.")
 
-            if mode == "IDLE": return
-
-            # 3. ANALYSE VORBEREITEN
+            # 3. SCANNER AUSFÜHREN
             deep_scan_full_report()
+            
+            # 4. DATEN FÜR GEMINI VORBEREITEN
             market_menu = self.filter_market_data(mode)
-            doctrine = self.load_doctrine_and_intel()
+            doctrine, intel = self.load_doctrine_and_intel()
             
             prompt = (
                 f"DU BIST DER NEXUS STRATEGE. MODUS: {mode}\n"
-                f"EQUITY: {equity} EUR\nOFFENE POSITIONEN: {json.dumps(positions)}\n"
-                f"DOKTRIN: {doctrine[:1000]}\n"
-                f"MÄRKTE:\n{market_menu}\n"
-                "Antworte NUR JSON: {\"summary\": \"...\", \"actions\": [{\"type\": \"OPEN/CLOSE\", ...}]}"
+                f"DEPOTWERT (EQUITY): {balance} EUR\n"
+                f"OFFENE POSITIONEN: {json.dumps(positions)}\n\n"
+                f"MENTOR DOKTRIN (WICHTIG):\n{doctrine[:1500]}\n\n"
+                f"AKTUELLE MÄRKTE:\n{market_menu}\n\n"
+                "ENTSCHEIDUNG: Antworte NUR im JSON Format:\n"
+                "{\"summary\": \"Grund\", \"actions\": [{\"type\": \"OPEN\", \"epic\": \"...\", \"dir\": \"BUY/SELL\", \"size\": 0.1}, {\"type\": \"CLOSE\", \"dealId\": \"...\"}]}"
             )
 
-            # 4. 🛡️ KI-KILL-SWITCH (NO-GEMINI-NO-TRADE)
-            print("🧠 Gemini entscheidet...")
+            # 5. KI-ANALYSE MIT MAXIMALEM KILL-SWITCH
+            print("🧠 Gemini analysiert die Lage...")
             res = self.strategy.get_analysis(prompt)
             
-            if not res or "Analiz su an yapilamiyor" in res or len(res) < 5:
-                # KI-AUSFALL LOGIK
-                msg = "🚨 KI-NOTAUS: Gemini antwortet nicht! (Token leer?)."
-                print(msg)
+            # 🛡️ NO-GEMINI-NO-TRADE SPERRE (KILL-SWITCH)
+            if not res or "Analiz su an yapilamiyor" in res or len(res) < 10:
+                warning = "🚨 KRITISCHER KI-AUSFALL: Gemini antwortet nicht (Token leer?)."
+                print(warning)
                 
                 if positions:
-                    print("📉 Schließe sofort ALLE Positionen zur Sicherheit...")
+                    print("📉 NOT-STOPP: Schließe sofort alle Positionen...")
                     for pos in positions:
                         self.ops.close_position(pos.get('dealId'))
-                    self.comm.send_report(f"{msg}\n🛑 Alle Trades wurden ZWANGSGESCHLOSSEN.")
+                    self.comm.send_report(f"{warning}\n🛑 Alle Positionen wurden zur Sicherheit GESCHLOSSEN.")
                 else:
-                    self.comm.send_report(f"{msg}\n🚫 Handel gestoppt.")
+                    self.comm.send_report(f"{warning}\n🚫 Handel ausgesetzt, bis KI verfügbar.")
                 
-                time.sleep(self.error_interval) # 60 Min warten
+                time.sleep(self.error_interval)
                 return
 
-            # 5. AUSFÜHRUNG BEI ERFOLGREICHER KI-ANTWORT
+            # 6. AUSFÜHRUNG
             try:
-                data = json.loads(res.replace("```json", "").replace("```", "").strip())
+                clean_res = res.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean_res)
+                
                 ops_log = []
                 for act in data.get('actions', []):
                     if act['type'] == 'OPEN':
-                        ok, m = self.ops.place_order(act['epic'], act['dir'], act['size'], act.get('sl'), act.get('tp'))
+                        ok, msg = self.ops.place_order(act['epic'], act['dir'], act['size'], act.get('sl'), act.get('tp'))
                         ops_log.append(f"OPEN {act['epic']}: {'✅' if ok else '❌'}")
                     elif act['type'] == 'CLOSE':
-                        ok, m = self.ops.close_position(act['dealId'])
+                        ok, msg = self.ops.close_position(act['dealId'])
                         ops_log.append(f"CLOSE {act['dealId']}: {'✅' if ok else '❌'}")
                 
-                if ops_log: self.comm.send_report(f"📊 ZYKLUS-BERICHT\nEquity: {equity}€\n" + "\n".join(ops_log))
+                if ops_log:
+                    self.comm.send_report(f"📊 **NEXUS ZYKLUS BERICHT**\nEquity: {balance}€\nModus: {mode}\n\n" + "\n".join(ops_log))
+
             except Exception as e:
-                nexus_logger.log_error("JSON_ERR", f"{e}\nRes: {res}")
+                print(f"Fehler beim Verarbeiten der KI-Antwort: {e}")
+                nexus_logger.log_error("CEO_PARSE_ERROR", res)
 
         except Exception as e:
             nexus_logger.log_error("CEO_CRASH", traceback.format_exc())
@@ -140,4 +176,9 @@ class NexusCEO:
             time.sleep(self.base_interval)
 
 if __name__ == "__main__":
-    NexusCEO().run()
+    ceo = NexusCEO()
+    # Support für Einzeldurchlauf (GitHub Actions) oder Dauerbetrieb
+    if "--single-cycle" in sys.argv:
+        ceo.run_business_cycle()
+    else:
+        ceo.run()
