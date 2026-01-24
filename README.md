@@ -62,3 +62,43 @@ Nexus Capital Corp, büyük yatırım şirketlerinin (Apple veya Berkshire Hatha
 * **Survival Mode:** If balance < 100€, only Commodities (Gold, Oil, etc.) are traded. / Wenn < 100€, nur Rohstoffe. / 100€ altı bütçede sadece emtialar işlem görür.
 * **API Guard:** Automatic 60-minute pause on Rate Limits. / 60 Min. Pause bei API Limit. / API limiti durumunda 60 dakika otomatik bekleme.
 * **Weekend:** Crypto trading only if balance > 100€. / Wochenende: Crypto nur > 100€. / Hafta sonu: Sadece 100€ üstü bütçeyle Kripto ticareti.
+
+---
+
+📱 Installation auf Termux (Android)
+Nexus Capital Corp kann auch mobil auf deinem Smartphone laufen:
+
+Termux öffnen und System updaten:
+
+Bash
+
+pkg update && pkg upgrade
+Python & Git installieren:
+
+Bash
+
+pkg install python git
+Repository klonen (oder Dateien manuell kopieren):
+
+Bash
+
+git clone https://github.com/KhungFu/nexus
+cd nexus
+Setup ausführen:
+
+Bash
+
+bash one_click_install.sh
+
+⚙️ Konfiguration
+Trage deine API-Keys in der erstellten .env Datei ein:
+
+CAPITAL_API_KEY: Dein Key von Capital.com
+
+TELEGRAM_TOKEN: Dein Bot-Token vom BotFather
+
+GEMINI_API_KEY_1: Dein Google AI Studio Key
+
+---
+
+`curl -s https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh | bash`
