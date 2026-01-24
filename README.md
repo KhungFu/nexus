@@ -70,25 +70,21 @@ Nexus Capital Corp kann auch mobil auf deinem Smartphone laufen:
 
 Termux öffnen und System updaten:
 
-Bash
-
+```shell
 pkg update && pkg upgrade
+```
+
 Python & Git installieren:
 
-Bash
-
+```shell
 pkg install python git
+```
+
 Repository klonen (oder Dateien manuell kopieren):
 
-Bash
-
-git clone https://github.com/KhungFu/nexus.git 
-cd nexus
-Setup ausführen:
-
-Bash
-
-bash one_click_install.sh
+```shell
+wget https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh && chmod +x one_click_install.sh && ./one_click_install.sh
+```
 
 ⚙️ Konfiguration
 Trage deine API-Keys in der erstellten .env Datei ein:
@@ -100,5 +96,6 @@ TELEGRAM_TOKEN: Dein Bot-Token vom BotFather
 GEMINI_API_KEY_1: Dein Google AI Studio Key
 
 ---
-
-`curl -s https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh | bash`
+```shell
+curl -s https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh | bash
+```
