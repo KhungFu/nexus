@@ -1,17 +1,47 @@
 # -*- coding: utf-8 -*-
-import google.generativeai as genai
+from google import genai
 import os
-from logger import nexus_logger
+
 class GeminiAnalyst:
     def __init__(self):
-        self.keys = [os.getenv(f"GEMINI_API_KEY_{i}") for i in range(1, 4) if os.getenv(f"GEMINI_API_KEY_{i}")]
+        # Deine 3 Keys für die Rotation
+        self.api_keys = [
+            os.getenv("GEMINI_API_KEY_1"),
+            os.getenv("GEMINI_API_KEY_2"),
+            os.getenv("GEMINI_API_KEY_3")
+        ]
+        # Exakt das Modell, das du angefordert hast
+        self.model_id = "gemini-3-flash-preview" 
+
     def get_analysis(self, prompt):
-        try:
-            if not self.keys: return "API KEY EKSIK"
-            genai.configure(api_key=self.keys[0])
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            nexus_logger.log_error("GEMINI_AI", e)
-            return "Analiz su an yapilamiyor."
+        """Analysiert den Markt mit Gemini 3 Flash Preview."""
+        for i, key in enumerate(self.api_keys):
+            if not key:
+                continue
+            try:
+                # Initialisierung nach der neuen Dokumentation
+                client = genai.Client(api_key=key)
+                
+                # Aufruf gemäß Gemini 3 Syntax
+                response = client.models.generate_content(
+                    model=self.model_id,
+                    contents=prompt
+                )
+                
+                if response and response.text:
+                    return response.text
+                
+            except Exception as e:
+                print(f"⚠️ Key {i+1} (Gemini 3) fehlgeschlagen: {e}")
+                continue # Nächsten Key ausprobieren
+        
+        # Falls kein Key funktioniert -> Trigger für den CEO Not-Stopp
+        return "Analiz su an yapilamiyor."
+
+    def load_mentor_instruction(self):
+        """Lädt deine Strategie aus der mentor_name.txt."""
+        file_path = "mentor_name.txt"
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        return "Handle nach der mentor_name.txt Doktrin."
