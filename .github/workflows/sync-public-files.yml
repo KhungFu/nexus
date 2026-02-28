@@ -1,0 +1,33 @@
+name: Sync selected files
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+
+      - name: Prepare files
+        run: |
+          mkdir public
+          cp file1.txt public/
+          cp file2.py public/
+          cp folder/file3.json public/
+          cp file4.md public/
+
+      - name: Push to public repository
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        with:
+          source-directory: public
+          destination-github-username: KHungFu
+          destination-repository-name: kisilerim
+          user-email: bot@github.com
+          target-branch: main
