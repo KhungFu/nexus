@@ -16,11 +16,14 @@ jobs:
       - name: Prepare files
         run: |
           mkdir public
-          cp file1.txt public/
-          cp file2.py public/
-          cp folder/file3.json public/
-          cp file4.md public/
-
+          cp https://github.com/KhungFu/nexus/blob/main/mentor_name.txt public/
+          cp https://github.com/KhungFu/nexus/blob/main/toplam_egitim.txt public/
+          cp https://github.com/KhungFu/nexus/blob/main/NewsVerlage.txt public/
+          cp https://github.com/KhungFu/nexus/blob/main/Bot_egitim_videolari.txt public/
+          cp https://github.com/KhungFu/nexus/blob/main/Audiobooks.txt public/
+          cp https://github.com/KhungFu/nexus/blob/main/Abfrage_Quellen.txt public/
+          
+          
       - name: Push to public repository
         uses: cpina/github-action-push-to-another-repository@main
         env:
