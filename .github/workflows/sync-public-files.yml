@@ -8,7 +8,6 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout private repo
         uses: actions/checkout@v4
@@ -34,3 +33,4 @@ jobs:
           destination-repository-name: kisilerim
           user-email: github-actions@github.com
           target-branch: main
+          
