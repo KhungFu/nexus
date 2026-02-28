@@ -15,22 +15,22 @@ jobs:
 
       - name: Prepare files
         run: |
+          rm -rf public
           mkdir public
-          cp https://github.com/KhungFu/nexus/blob/main/mentor_name.txt public/
-          cp https://github.com/KhungFu/nexus/blob/main/toplam_egitim.txt public/
-          cp https://github.com/KhungFu/nexus/blob/main/NewsVerlage.txt public/
-          cp https://github.com/KhungFu/nexus/blob/main/Bot_egitim_videolari.txt public/
-          cp https://github.com/KhungFu/nexus/blob/main/Audiobooks.txt public/
-          cp https://github.com/KhungFu/nexus/blob/main/Abfrage_Quellen.txt public/
-          
-          
+          cp mentor_name.txt public/
+          cp toplam_egitim.txt public/
+          cp NewsVerlage.txt public/
+          cp Bot_egitim_videolari.txt public/
+          cp Audiobooks.txt public/
+          cp Abfrage_Quellen.txt public/
+
       - name: Push to public repository
         uses: cpina/github-action-push-to-another-repository@main
         env:
           API_TOKEN_GITHUB: ${{ secrets.PUBLIC_REPO_TOKEN }}
         with:
           source-directory: public
-          destination-github-username: KHungFu
+          destination-github-username: KhungFu
           destination-repository-name: kisilerim
-          user-email: bot@github.com
+          user-email: github-actions@github.com
           target-branch: main
