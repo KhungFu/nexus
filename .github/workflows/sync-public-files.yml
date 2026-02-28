@@ -27,7 +27,7 @@ jobs:
       - name: Push to public repository
         uses: cpina/github-action-push-to-another-repository@main
         env:
-          API_TOKEN_GITHUB: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          API_TOKEN_GITHUB: ${{ secrets.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 }}
         with:
           source-directory: public
           destination-github-username: KhungFu
