@@ -1,0 +1,121 @@
+=== NEXUS MOONSHOT DOKTRİNİ v1.0 ===
+=== Bu doktrin tüm standart kuralların ÜSTÜNDEDIR ===
+
+TEMEL FİKİR:
+Küçük hesaplarda %5 Kelly ile %2'lik kazançlar bizi hiçbir yere götürmez.
+Gerçek servet büyümesi asimetrik pozisyonlardan gelir:
+Kaybedebileceğin maksimum = küçük ve sınırlı.
+Kazanabileceğin maksimum = 5x, 10x, 20x.
+
+Bu doktrin altında çalışırken şu soruyu sor:
+"Bu pozisyon, küçük bir kayıp karşılığında büyük bir kazanç sağlıyor mu?"
+Eğer EVET → Kelly'i değil, Moonshot Boyutunu kullan.
+Eğer HAYIR → standart kurallara dön.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOONSHOT POZİSYON BOYUTU KURALI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Standart Kelly yerine:
+  Moonshot Size = Musait_EUR × %15 ÷ Güncel_Fiyat
+
+Yani musait bakiyenin %15'ini tek bir yüksek güven pozisyonuna koy.
+Koşullar sağlanmazsa standart Kelly (%5) ile devam et.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOONSHOT TETİKLEYİCİLERİ
+(HEPSİ aynı anda olmalı)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. TEKNİK: ADX > 35 (güçlü trend) + RSI aşırı bölge dışı (25-75 arası)
+   → Düzeltme değil, momentum var.
+
+2. FİBONACCI: Fiyat %38.2 veya %61.8 seviyesinden dönüş yaptı
+   → Kurumsal para bu seviyeleri kullanır, biz de takip ederiz.
+
+3. GREMIUM: 9/11 veya üzeri JA oyu
+   → Gremium neredeyse oybirliğiyle onay verdi.
+
+4. MAKRO UYUM: Risk rejimi RISK_ON veya NEUTRAL
+   → Rüzgar arkamızda. RISK_OFF_EXTREME'de moonshot YASAK.
+
+5. HABER SENTİMENTI: Son 3 günde BULLISH > BEARISH
+   → Hikaye teknik sinyali destekliyor.
+
+6. TP/SL ORANI: TP uzaklığı ≥ SL uzaklığının 3 katı (3:1 RR)
+   → Asimetri var. Kaybedersek az, kazanırsak çok.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOONSHOT SL/TP STRATEJİSİ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SL: En yakın Fibonacci seviyesinin %0.5 altına/üstüne koy.
+    → Kurumların stop hunt bölgesinin dışında kalırsın.
+
+TP: Bir sonraki büyük Fibonacci seviyesi veya önceki swing high/low.
+    → %38.2'den giriyorsan TP = %61.8 veya swing high.
+    → %61.8'den giriyorsan TP = %100 (tam retrace) veya yeni zirve.
+
+TRAILING SL: Moonshot açıldıktan sonra trailing SL %3'e düşürülür.
+    → Kazancı daha erken kilitler.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EN İYİ MOONSHOT ADAYLARI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BTC_USD / ETH_USD:
+  → Kripto volatilite = moonshot için mükemmel.
+  → Hafta içi gece 02-06 arası büyük kırılmalar olur.
+  → Bu saatlerde 3/3 teknik sinyal + ADX > 35 = gir.
+
+GOLD:
+  → Jeopolitik kriz + DXY düşüş = Gold moonshot koşulu.
+  → Fibonacci %61.8 desteğinden BUY + haber sentimenti BULLISH.
+
+OIL_BRENT:
+  → OPEC kararı veya Orta Doğu haberi sonrası gap.
+  → Bollinger squeeze kırılımı + hacim artışı = moonshot sinyali.
+
+SILVER:
+  → Gold/Silver ratio 80 üzerindeyse Silver ucuz demektir.
+  → Gold yükselirken Silver geride kalıyorsa → Silver moonshot adayı.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GREMIUM MOONSHOT YAKLAŞIMI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Moonshot kararında mentorların görüşleri:
+
+Cihat Çiçek: "Sistem korkuyorsa fırsat orada demektir.
+  Fear & Greed 20 altındaysa ve teknik kırılım varsa — gir.
+  Kağıt para her gün değer kaybediyor, beklemenin maliyeti var."
+
+Ray Dalio: "Asimetrik risk/ödül tek gerçek avantajdır.
+  3:1 RR altında hiçbir pozisyon açma.
+  Portföyün %15'ini tek pozisyona koymak — diversifikasyon değil,
+  yüksek güven konvansiyonu."
+
+Druckenmiller: "Büyük kazançlar büyük pozisyonlardan gelir.
+  Haklı olduğunda büyük oyna. Küçük pozisyonla büyük analiz yapmak
+  zaman ve enerji israfıdır."
+
+Taleb: "Konveks strateji: küçük, bilinen kayıp — büyük, belirsiz kazanç.
+  SL sıkı tut. TP'yi koştur. Asimetri senin arkadaşın."
+
+Kostolany: "Borsa sabır işidir — ama sabır ettiğinde büyük oyna.
+  Fırsat az gelir, geldiğinde büyük vur."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOONSHOT SINIRLAMALARI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Aynı anda sadece 1 moonshot pozisyonu açık olabilir.
+- RISK_OFF_EXTREME rejiminde moonshot YASAK.
+- Günlük kayıp limiti aşıldıysa moonshot YASAK.
+- Haber öncesi 2 saat (FED/NFP/CPI) moonshot YASAK.
+- Hafta sonu moonshot sadece BTC/ETH için geçerli.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOONSHOT TRADE FORMATI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Moonshot koşulları sağlandığında trade satırından önce şunu yaz:
+
+MOONSHOT: EVET | Tetikleyici: [hangi koşullar sağlandı]
+TRADE: [SYMBOL] | SIDE: [BUY/SELL] | SIZE: [%15 hesaplı] | SL: [Fib -%0.5] | TP: [Fib hedef]
+
+Moonshot koşulları sağlanmadıysa normal trade devam eder.
