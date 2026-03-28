@@ -1,5 +1,5 @@
 # Capital.com Market Configuration
-# Auto-generated: 2026-03-19 21:48:10
+# Auto-generated: 2026-03-28 09:01:03
 # Total Markets: 45
 
 MARKET_CONFIG = {
@@ -9,13 +9,13 @@ MARKET_CONFIG = {
         "spread": 0.500000
     },
     "SILVER": {"epic": "SILVER", "min_size": 1,
-        "spread": 0.080000
+        "spread": 0.050000
     },
     "PLATINUM": {"epic": "PLATINUM", "min_size": 0.01,
-        "spread": 7.000000
+        "spread": 12.000000
     },
     "PALLADIUM": {"epic": "PALLADIUM", "min_size": 0.01,
-        "spread": 9.100000
+        "spread": 20.400000
     },
 
     # ENERGIE
@@ -26,13 +26,13 @@ MARKET_CONFIG = {
         "spread": 0.090000
     },
     "NATURAL_GAS": {"epic": "NATURALGAS", "min_size": 10,
-        "spread": 0.005000
+        "spread": 0.002000
     },
     "HEATING_OIL": {"epic": "HEATINGOIL", "min_size": 10,
-        "spread": 0.008000
+        "spread": 0.004000
     },
     "GASOLINE": {"epic": "GASOLINE", "min_size": 10,
-        "spread": 0.005000
+        "spread": 0.006000
     },
 
     # INDUSTRIEMETALLE
@@ -82,79 +82,79 @@ MARKET_CONFIG = {
         "spread": 1.750000
     },
     "SOL_USD": {"epic": "SOLUSD", "min_size": 0.1,
-        "spread": 0.452400
+        "spread": 0.417500
     },
     "AVAX_USD": {"epic": "AVAXUSD", "min_size": 0.1,
-        "spread": 0.047900
+        "spread": 0.044200
     },
     "MATIC_USD": {"epic": "MATICUSD", "min_size": 10,
-        "spread": 0.000480
+        "spread": 0.000460
     },
     "POL_USD": {"epic": "MATICUSD", "min_size": 10,
-        "spread": 0.000480
+        "spread": 0.000460
     },
     "DOT_USD": {"epic": "DOTUSD", "min_size": 1,
-        "spread": 0.007000
+        "spread": 0.006500
     },
     "LINK_USD": {"epic": "LINKUSD", "min_size": 1,
-        "spread": 0.046080
+        "spread": 0.042990
     },
     "UNI_USD": {"epic": "UNIUSD", "min_size": 1,
-        "spread": 0.018020
+        "spread": 0.016980
     },
     "AAVE_USD": {"epic": "AAVEUSD", "min_size": 0.01,
-        "spread": 1.119000
+        "spread": 0.978000
     },
     "ATOM_USD": {"epic": "ATOMUSD", "min_size": 1,
-        "spread": 0.017700
+        "spread": 0.016900
     },
     "LTC_USD": {"epic": "LTCUSD", "min_size": 0.1,
-        "spread": 0.290000
+        "spread": 0.270000
     },
 
     # CRYPTO (PRO-BTC) - EUR
     "ETH_EUR": {"epic": "ETHEUR", "min_size": 0.001,
-        "spread": 9.250000
+        "spread": 8.720000
     },
     "LTC_EUR": {"epic": "LTCEUR", "min_size": 0.1,
-        "spread": 0.250000
+        "spread": 0.230000
     },
 
     # CRYPTO (ANTI-BTC) - USD
     "XRP_USD": {"epic": "XRPUSD", "min_size": 1,
-        "spread": 0.007060
+        "spread": 0.006690
     },
     "ADA_USD": {"epic": "ADAUSD", "min_size": 10,
-        "spread": 0.001330
+        "spread": 0.001250
     },
     "XLM_USD": {"epic": "XLMUSD", "min_size": 10,
-        "spread": 0.000870
+        "spread": 0.000830
     },
     "ALGO_USD": {"epic": "ALGOUSD", "min_size": 10,
-        "spread": 0.000900
+        "spread": 0.000800
     },
     "VET_USD": {"epic": "VETUSD", "min_size": 100,
         "spread": 0.001120
     },
     "HBAR_USD": {"epic": "HBARUSD", "min_size": 10,
-        "spread": 0.000930
+        "spread": 0.000900
     },
     "IOTA_USD": {"epic": "IOTAUSD", "min_size": 10,
         "spread": 0.000500
     },
     "EOS_USD": {"epic": "EOSUSD", "min_size": 10,
-        "spread": 0.004000
+        "spread": 0.003700
     },
     "TRX_USD": {"epic": "TRXUSD", "min_size": 10,
-        "spread": 0.003080
+        "spread": 0.003120
     },
     "XTZ_USD": {"epic": "XTZUSD", "min_size": 10,
-        "spread": 0.004000
+        "spread": 0.003500
     },
 
     # CRYPTO (ANTI-BTC) - EUR
     "XRP_EUR": {"epic": "XRPEUR", "min_size": 1,
-        "spread": 0.006080
+        "spread": 0.005830
     }
 
 }
