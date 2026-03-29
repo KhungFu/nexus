@@ -3287,7 +3287,7 @@ def sync_pyramiding_from_capital():
     return f"Pyramiding-Sync: {len(epic_count)} Epics korrekt"
 
 # ============================================================
-# CAPITAL.COM HELPERS (SESSION CACHING)
+# CAPITAL.COM HELPERS (SESSION CACHING & HARD ACCOUNT SWITCH)
 # ============================================================
 class CapitalSession:
     def __init__(self):
@@ -3298,6 +3298,7 @@ class CapitalSession:
 
     def get_headers(self):
         with self.lock:
+            # Wenn Token noch gültig, direkt zurückgeben
             if time.time() < self.expires and self.cst:
                 return {
                     "X-CAP-API-KEY": CAP_KEY,
@@ -3306,9 +3307,8 @@ class CapitalSession:
                     "Content-Type": "application/json"
                 }
             try:
+                # 1. Normaler Login (Account ID wird beim ersten POST ignoriert)
                 login_payload = {"identifier": CAP_ID, "password": CAP_PW}
-                if TARGET_ACCOUNT_ID:
-                    login_payload["accountId"] = TARGET_ACCOUNT_ID
                 r = requests.post(
                     f"{CAPITAL_URL}/session",
                     json=login_payload,
@@ -3325,37 +3325,27 @@ class CapitalSession:
                         "X-SECURITY-TOKEN": self.token,
                         "Content-Type": "application/json"
                     }
-                    # Hangi hesaba girildiğini doğrula
+                    
+                    # 2. ZWINGENDER KONTO-WECHSEL, WENN ID IN .ENV STEHT
                     if TARGET_ACCOUNT_ID:
-                        try:
-                            # Login response body'de accountId var mı?
-                            login_body = r.json()
-                            current_acc = login_body.get("accountId", "")
-                            if str(current_acc) == str(TARGET_ACCOUNT_ID):
-                                logging.info(f"✅ Doğru hesap: {TARGET_ACCOUNT_ID}")
-                            else:
-                                logging.warning(f"⚠️ Hesap uyuşmuyor: login={current_acc}, hedef={TARGET_ACCOUNT_ID}")
-                                # Accounts listesinden doğru hesabı bul ve switch yap
-                                acc_list = requests.get(f"{CAPITAL_URL}/accounts", headers=h_temp, timeout=10)
-                                if acc_list.status_code == 200:
-                                    for acc in acc_list.json().get("accounts", []):
-                                        if str(acc.get("accountId","")) == str(TARGET_ACCOUNT_ID):
-                                            # PUT ile hesap değiştir
-                                            sw = requests.put(
-                                                f"{CAPITAL_URL}/session/accounts/{TARGET_ACCOUNT_ID}",
-                                                headers=h_temp, timeout=10
-                                            )
-                                            if sw.status_code == 200:
-                                                new_cst = sw.headers.get("CST", self.cst)
-                                                new_tok = sw.headers.get("X-SECURITY-TOKEN", self.token)
-                                                if new_cst: self.cst = new_cst
-                                                if new_tok: self.token = new_tok
-                                                h_temp["CST"] = self.cst
-                                                h_temp["X-SECURITY-TOKEN"] = self.token
-                                                logging.info(f"✅ Hesap switch OK: {TARGET_ACCOUNT_ID}")
-                                            break
-                        except Exception as sw_e:
-                            logging.warning(f"Hesap dogrulama hatasi: {sw_e}")
+                        switch_res = requests.put(
+                            f"{CAPITAL_URL}/session",
+                            json={"accountId": str(TARGET_ACCOUNT_ID).strip()},
+                            headers=h_temp, 
+                            timeout=10
+                        )
+                        if switch_res.status_code == 200:
+                            # Capital generiert beim Wechsel oft neue Tokens
+                            new_cst = switch_res.headers.get("CST", self.cst)
+                            new_tok = switch_res.headers.get("X-SECURITY-TOKEN", self.token)
+                            if new_cst: self.cst = new_cst
+                            if new_tok: self.token = new_tok
+                            h_temp["CST"] = self.cst
+                            h_temp["X-SECURITY-TOKEN"] = self.token
+                            logging.info(f"✅ Konto ERFOLGREICH gewechselt auf ID: {TARGET_ACCOUNT_ID}")
+                        else:
+                            logging.error(f"❌ Konto-Wechsel FEHLGESCHLAGEN! HTTP {switch_res.status_code}: {switch_res.text}")
+
                     mod_info = "DEMO" if IS_DEMO else "CANLI"
                     acc_info = f"ID: {TARGET_ACCOUNT_ID}" if TARGET_ACCOUNT_ID else "ilk hesap"
                     logging.info(f"✅ Session hazir - {mod_info} | {acc_info}")
@@ -3378,18 +3368,23 @@ def get_account_info(h):
         if not acc_req.get('accounts'):
             logging.error("Hesap listesi bos - Capital.com session hatasi")
             return None
-        # TARGET_ACCOUNT_ID varsa o hesabi sec, yoksa ilk hesabi kullan
+            
         accounts = acc_req['accounts']
         acc = None
+        
+        # Finde exakt das Konto aus der .env Datei
         if TARGET_ACCOUNT_ID:
             for a in accounts:
-                if str(a.get('accountId','')) == str(TARGET_ACCOUNT_ID):
+                if str(a.get('accountId','')) == str(TARGET_ACCOUNT_ID).strip():
                     acc = a
                     break
+                    
+        # Fallback auf das erste Konto, falls ID nicht gefunden wird
         if not acc:
             acc = accounts[0]
             if TARGET_ACCOUNT_ID:
                 logging.warning(f"Hesap ID {TARGET_ACCOUNT_ID} bulunamadi - ilk hesap kullaniliyor")
+                
         return {
             "nakit": acc['balance'].get('balance', 0),
             "toplam": acc['balance'].get('deposit', 0),
@@ -3397,10 +3392,11 @@ def get_account_info(h):
             "marjin": 0,
             "musait": acc['balance'].get('available', 0),
             "hesap_id": acc.get('accountId', ''),
-            "hesap_adi": acc.get('accountName', '')
+            "hesap_adi": acc.get('accountName', '') # Holt den Namen (z.B. "Nebulaya doğru") für Telegram
         }
-    except:
-        return {"nakit": 0, "toplam": 0, "upl": 0, "marjin": 0, "musait": 0}
+    except Exception as e:
+        logging.error(f"Account Info Fehler: {e}")
+        return {"nakit": 0, "toplam": 0, "upl": 0, "marjin": 0, "musait": 0, "hesap_id": "", "hesap_adi": ""}
 
 # ============================================================
 # INDIKATOREN (ADX, RSI, MA)
