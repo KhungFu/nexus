@@ -1,0 +1,33 @@
+# ============================================================
+# NEXUS CEO v14 - .env TEMPLATE
+# DIKKAT: = isaretinin etrafinda BOSLUK OLMAMALI
+# DIKKAT: Dosya UTF-8 olmali, BOM olmamali
+# ============================================================
+
+# --- GROQ ---
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
+
+# --- GEMINI ---
+GEMINI_API_KEY_1=AIzaSyXXXXXXXXXXXXXXXXXXXXXXX
+GEMINI_API_KEY_2=AIzaSyXXXXXXXXXXXXXXXXXXXXXXX
+
+# --- TELEGRAM ---
+TG_TOKEN=1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+MY_CHAT_ID=517968448
+
+# --- CAPITAL.COM ---
+# Her botun KENDI hesabinda uretilmis API key olmali!
+CAPITAL_API_KEY=xxxxxxxxxxxxxxxx
+CAPITAL_IDENTIFIER=email@example.com
+CAPITAL_PASSWORD=SifreXXXX
+
+# CAPITAL_URL YAZMA - IS_DEMO bunu otomatik ayarlar
+# IS_DEMO=true  -> demo-api-capital.backend-capital.com
+# IS_DEMO=false -> api-capital.backend-capital.com
+IS_DEMO=true
+
+# hesap_bul.py ile buldugun ID
+CAPITAL_ACCOUNT_ID=315042529837143198
+
+# --- DIGER ---
+FRED_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
