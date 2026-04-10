@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # NEXUS CEO v14.2 - QUANT FUND EDITION
-# Multi-Account Fix: X-CAP-ACCOUNT-ID her API isteğinde
 # Hibrit AI: Gemini (gemini-3-flash-preview) + Groq (Llama 4) fallback
 # Telegram Watchdog: Telegram olmadan trading devam eder
 # Trailing SL: Pyramiding pozisyonlari %1.5 trailing stop
@@ -78,11 +77,21 @@ GEMINI_KEYS = [os.getenv(f"GEMINI_API_KEY_{i}") for i in range(1, 7)]
 GEMINI_KEYS = [k for k in GEMINI_KEYS if k]
 
 # Groq - ultra hizli, Llama modelleri (fallback + hiz gerektiren gorevler)
+# Groq key rotasyonu - .env'de istediğin kadar key ekleyebilirsin:
+# GROQ_API_KEY=...       (tek key kullanıyorsan)
+# GROQ_API_KEY_1=...     (birden fazla key için)
+# GROQ_API_KEY_2=...
+# GROQ_API_KEY_3=...  vb.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_KEYS    = [os.getenv(f"GROQ_API_KEY_{i}") for i in range(1, 4)]
+GROQ_KEYS    = [os.getenv(f"GROQ_API_KEY_{i}") for i in range(1, 10)]  # max 9 key
 if GROQ_API_KEY and GROQ_API_KEY not in GROQ_KEYS:
     GROQ_KEYS.insert(0, GROQ_API_KEY)
-GROQ_KEYS = [k for k in GROQ_KEYS if k]
+GROQ_KEYS = [k for k in GROQ_KEYS if k]  # boş olanları filtrele
+
+# Aktif key index ve rate limit tracker
+_groq_key_idx  = 0
+_groq_key_lock = threading.Lock()
+_groq_rate_limited = {}  # {key: unix_timestamp} - ne zaman serbest kalır
 CAP_KEY = os.getenv("CAPITAL_API_KEY")
 CAP_ID = os.getenv("CAPITAL_IDENTIFIER")
 CAP_PW = os.getenv("CAPITAL_PASSWORD")
@@ -96,14 +105,8 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")  # St. Louis Fed - ucretsiz
 IS_DEMO = os.getenv("IS_DEMO", "true").lower() == "true"
 TARGET_ACCOUNT_ID = os.getenv("CAPITAL_ACCOUNT_ID", "")
 
-# CAPITAL_URL: .env'de tanımlanmışsa kullan, yoksa IS_DEMO'ya göre otomatik
-# NOT: .env'de CAPITAL_URL=... satırı OLMAMALI - IS_DEMO yeterli
-_env_url = os.getenv("CAPITAL_URL", "").strip()
-if _env_url:
-    CAPITAL_URL = _env_url
-    logging.warning(f"⚠️ .env'den CAPITAL_URL alındı: {_env_url} (IS_DEMO görmezden gelindi!)")
-elif IS_DEMO:
-    CAPITAL_URL = "https://demo-api-capital.backend-capital.com/api/v1"
+if IS_DEMO:
+    CAPITAL_URL = os.getenv("CAPITAL_URL") or "https://demo-api-capital.backend-capital.com/api/v1"
     logging.info("🧪 MOD: DEMO HESAP")
 else:
     CAPITAL_URL = "https://api-capital.backend-capital.com/api/v1"
@@ -463,13 +466,55 @@ def get_last_ai_info():
     with _last_ai_lock:
         return _last_ai_backend["backend"], _last_ai_backend["model"]
 
-def get_groq_client():
-    """Groq API client (OpenAI-uyumlu)."""
-    key = GROQ_KEYS[int(time.time() / 3600) % len(GROQ_KEYS)] if GROQ_KEYS else None
-    if not key:
+def get_groq_client(force_next=False):
+    """
+    Groq API client - akıllı key rotasyonu.
+    Rate limit gelince otomatik sonraki key'e geçer.
+    force_next=True: bir sonraki key'e zorla geç (hata sonrası)
+    """
+    global _groq_key_idx
+    if not GROQ_KEYS:
         logging.warning("GROQ_API_KEY eksik!")
         return None
-    return OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+
+    with _groq_key_lock:
+        now = time.time()
+
+        if force_next:
+            _groq_key_idx = (_groq_key_idx + 1) % len(GROQ_KEYS)
+
+        # Rate limit'i geçmiş key'i atla
+        attempts = 0
+        while attempts < len(GROQ_KEYS):
+            key = GROQ_KEYS[_groq_key_idx % len(GROQ_KEYS)]
+            wait_until = _groq_rate_limited.get(key, 0)
+            if now >= wait_until:
+                break  # Bu key kullanılabilir
+            # Bu key hâlâ rate limited, bir sonrakine bak
+            _groq_key_idx = (_groq_key_idx + 1) % len(GROQ_KEYS)
+            attempts += 1
+        else:
+            # Tüm keyler rate limited
+            soonest = min(_groq_rate_limited.values()) if _groq_rate_limited else 0
+            wait_sec = max(0, soonest - now)
+            logging.warning(f"Tüm Groq keyleri rate limited! En erken {wait_sec:.0f}s sonra serbest.")
+            return None
+
+        logging.debug(f"Groq key #{_groq_key_idx + 1}/{len(GROQ_KEYS)} kullanılıyor")
+        return OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+
+def groq_mark_rate_limited(wait_seconds=60):
+    """Aktif key'i rate limited olarak işaretle, sonraki key'e geç."""
+    global _groq_key_idx
+    with _groq_key_lock:
+        if not GROQ_KEYS: return
+        key = GROQ_KEYS[_groq_key_idx % len(GROQ_KEYS)]
+        _groq_rate_limited[key] = time.time() + wait_seconds
+        _groq_key_idx = (_groq_key_idx + 1) % len(GROQ_KEYS)
+        logging.warning(
+            f"Groq key #{(_groq_key_idx) % len(GROQ_KEYS) + 1} rate limited "
+            f"({wait_seconds}s) → key #{_groq_key_idx + 1} devrede"
+        )
 
 # ============================================================
 # NEXUS QUANT LAYER v11.0
@@ -3486,118 +3531,30 @@ def sync_pyramiding_from_capital():
 # ============================================================
 class CapitalSession:
     """
-    Capital.com session yoneticisi - v14.2 fix
-    Her session yenilemesinde TARGET_ACCOUNT_ID'yi zorla aktif yapar.
-    Coklu bot senaryosunda diger botun switch'i bozabilir -
-    bu yuzden her get_headers() cagrisi once aktif hesabi KONTROL eder,
-    yanlis hesaptaysa aninda switch yapar.
+    Capital.com session yoneticisi.
+    v13.2 ile ayni sade sistem - calistigini bildigimiz yontem.
+    Login sirasinda accountId veriliyor, X-CAP-ACCOUNT-ID her istekte gidiyor.
     """
     def __init__(self):
         self.cst     = None
         self.token   = None
         self.expires = 0
         self.lock    = threading.Lock()
-        self.active_account_id = None  # Onaylanan aktif hesap ID
 
-    def _make_headers(self):
-        """
-        Her API isteğine X-CAP-ACCOUNT-ID ekle.
-        Bu sayede birden fazla bot aynı anda çalışırken
-        her bot kendi hesabına yazar - hesap karışmaz.
-        """
-        h = {
-            "X-CAP-API-KEY": CAP_KEY,
-            "CST": self.cst,
-            "X-SECURITY-TOKEN": self.token,
-            "Content-Type": "application/json"
-        }
-        if TARGET_ACCOUNT_ID:
-            h["X-CAP-ACCOUNT-ID"] = str(TARGET_ACCOUNT_ID)
-        return h
-
-    def _switch_to_target(self, h):
-        """TARGET_ACCOUNT_ID'yi aktif hesap yap. Basarisizsa False doner."""
-        if not TARGET_ACCOUNT_ID:
-            return True
-        try:
-            sw = requests.put(
-                f"{CAPITAL_URL}/session/accounts/{TARGET_ACCOUNT_ID}",
-                headers=h, timeout=10
-            )
-            if sw.status_code == 200:
-                # Switch sonrasi yeni CST/token gelebilir
-                new_cst = sw.headers.get("CST")
-                new_tok = sw.headers.get("X-SECURITY-TOKEN")
-                if new_cst: self.cst = new_cst
-                if new_tok: self.token = new_tok
-                self.active_account_id = str(TARGET_ACCOUNT_ID)
-                logging.info(f"✅ Hesap switch OK → {TARGET_ACCOUNT_ID}")
-                return True
-            else:
-                logging.warning(f"⚠️ Hesap switch basarisiz: HTTP {sw.status_code}")
-                return False
-        except Exception as e:
-            logging.warning(f"Hesap switch hatasi: {e}")
-            return False
-
-    def _verify_active_account(self, h):
-        """
-        Aktif hesabi dogrula - yanlis hesaptaysa switch yap.
-        Coklu bot senaryosunda kritik!
-        """
-        if not TARGET_ACCOUNT_ID:
-            return h
-        try:
-            r = requests.get(f"{CAPITAL_URL}/accounts", headers=h, timeout=10)
-            if r.status_code != 200:
-                return h
-            accounts = r.json().get("accounts", [])
-            # Aktif olan hesabi bul (isPreferred veya ilk preferred)
-            active_id = None
-            for a in accounts:
-                if a.get("preferred", False) or a.get("status") == "SELECTED":
-                    active_id = str(a.get("accountId", ""))
-                    break
-            # Aktif hesap hedefimiz degil mi?
-            if active_id and active_id != str(TARGET_ACCOUNT_ID):
-                logging.warning(
-                    f"⚠️ Aktif hesap yanlis: {active_id} != hedef {TARGET_ACCOUNT_ID} "
-                    f"(baska bot switch yapti?) - Duzeltiliyor..."
-                )
-                if self._switch_to_target(h):
-                    return self._make_headers()
-            elif not active_id:
-                # preferred bulunamadi - yine de switch dene
-                self._switch_to_target(h)
-                return self._make_headers()
-        except Exception as e:
-            logging.warning(f"Hesap dogrulama hatasi: {e}")
-        return h
-
-    def get_headers(self, ensure_account=False):
-        """
-        ensure_account=True: trade ve pozisyon sorgularinda
-        her cagirida aktif hesabi dogrula.
-        ensure_account=False: normal cagrilar (haber, analiz vs) -
-        sadece 5 dakikada bir kontrol eder (performans).
-        """
+    def get_headers(self):
         with self.lock:
             if time.time() < self.expires and self.cst:
-                h = self._make_headers()
-                time_since_refresh = 1200 - (self.expires - time.time())
-                if TARGET_ACCOUNT_ID:
-                    if ensure_account:
-                        # Trade/pozisyon oncesi - HER SEFERINDE dogrula
-                        h = self._verify_active_account(h)
-                    elif time_since_refresh > 300:
-                        # Normal cagri - 5 dakikada bir kontrol
-                        if self.active_account_id != str(TARGET_ACCOUNT_ID):
-                            h = self._verify_active_account(h)
-                return h
-
-            # Session yenile
+                return {
+                    "X-CAP-API-KEY":    CAP_KEY,
+                    "CST":              self.cst,
+                    "X-SECURITY-TOKEN": self.token,
+                    "Content-Type":     "application/json",
+                    **( {"X-CAP-ACCOUNT-ID": str(TARGET_ACCOUNT_ID)} if TARGET_ACCOUNT_ID else {} )
+                }
             try:
                 login_payload = {"identifier": CAP_ID, "password": CAP_PW}
+                if TARGET_ACCOUNT_ID:
+                    login_payload["accountId"] = TARGET_ACCOUNT_ID
                 r = requests.post(
                     f"{CAPITAL_URL}/session",
                     json=login_payload,
@@ -3605,59 +3562,23 @@ class CapitalSession:
                     timeout=15
                 )
                 if r.status_code == 200:
-                    self.cst   = r.headers.get("CST")
-                    self.token = r.headers.get("X-SECURITY-TOKEN")
+                    self.cst     = r.headers.get("CST")
+                    self.token   = r.headers.get("X-SECURITY-TOKEN")
                     self.expires = time.time() + 1200
-                    self.active_account_id = None
-                    h = self._make_headers()
-
-                    if TARGET_ACCOUNT_ID:
-                        try:
-                            login_body  = r.json()
-                            current_acc = str(login_body.get("accountId", ""))
-                            logging.info(f"Login sonrasi aktif hesap: '{current_acc}', hedef: '{TARGET_ACCOUNT_ID}'")
-
-                            if current_acc == str(TARGET_ACCOUNT_ID):
-                                # Zaten doğru hesaptayız
-                                self.active_account_id = current_acc
-                                logging.info(f"✅ Login: Doğru hesap {TARGET_ACCOUNT_ID}")
-                            else:
-                                # Yanlış hesap - switch dene
-                                logging.warning(f"⚠️ Login hesabı yanlış: {current_acc} → hedef: {TARGET_ACCOUNT_ID}")
-                                switched = self._switch_to_target(h)
-                                h = self._make_headers()
-                                if switched:
-                                    self.active_account_id = str(TARGET_ACCOUNT_ID)
-                                else:
-                                    # Switch çalışmadı - accounts listesinden kontrol et
-                                    try:
-                                        acc_r = requests.get(f"{CAPITAL_URL}/accounts", headers=h, timeout=10)
-                                        if acc_r.status_code == 200:
-                                            accs = acc_r.json().get("accounts", [])
-                                            # X-SECURITY-TOKEN hangi hesabı gösteriyor?
-                                            for a in accs:
-                                                logging.info(
-                                                    f"  Hesap: {a.get('accountName')} | "
-                                                    f"ID: {a.get('accountId')} | "
-                                                    f"Preferred: {a.get('preferred')} | "
-                                                    f"Status: {a.get('status')}"
-                                                )
-                                    except: pass
-                                    logging.error(
-                                        f"❌ Switch basarisiz! API key bu hesaba ait olmayabilir. "
-                                        f"COZUM: {TARGET_ACCOUNT_ID} hesabina giris yapip "
-                                        f"Settings > API integrations > yeni key uret!"
-                                    )
-                        except Exception as sw_e:
-                            logging.warning(f"Login hesap doğrulama hatası: {sw_e}")
-
-                    mod_info = "DEMO" if IS_DEMO else "CANLI"
-                    acc_info = f"ID: {TARGET_ACCOUNT_ID}" if TARGET_ACCOUNT_ID else "ilk hesap"
-                    logging.info(f"✅ Session hazır - {mod_info} | {acc_info}")
-                    return h
+                    mod_info     = "DEMO" if IS_DEMO else "CANLI"
+                    acc_info     = f"(ID: {TARGET_ACCOUNT_ID})" if TARGET_ACCOUNT_ID else "(ilk hesap)"
+                    logging.info(f"✅ Session olusturuldu - {mod_info} {acc_info}")
+                    return {
+                        "X-CAP-API-KEY":    CAP_KEY,
+                        "CST":              self.cst,
+                        "X-SECURITY-TOKEN": self.token,
+                        "Content-Type":     "application/json",
+                        **( {"X-CAP-ACCOUNT-ID": str(TARGET_ACCOUNT_ID)} if TARGET_ACCOUNT_ID else {} )
+                    }
             except Exception as e:
                 logging.error(f"Session hatasi: {e}")
             return None
+
 
 capital_session = CapitalSession()
 
@@ -4370,7 +4291,7 @@ def load_sources():
     """
     try:
         r = requests.get(
-            "https://raw.githubusercontent.com/KhungFu/kisilerim/refs/heads/main/toplam_egitim.txt",
+            "https://raw.githubusercontent.com/KhungFu/nexus/refs/heads/main/toplam_egitim.txt",
             timeout=10
         )
         if r.status_code != 200:
@@ -4846,7 +4767,7 @@ def load_doctrine():
             logging.warning(f"Lokal doktrin okunamadi: {e}")
 
     # 2. GitHub'dan cek
-    base_gh = "https://raw.githubusercontent.com/KhungFu/kisilerim/main"
+    base_gh = "https://raw.githubusercontent.com/KhungFu/nexus/main"
     parts = []
     for fname in ["mentor_name.txt", "moonshot_doktrin.txt"]:
         try:
@@ -5076,6 +4997,17 @@ def fetch_strategic_response(prompt_type="AUTONOMOUS", extra_data=None):
     dynamic_doctrine = load_doctrine()
     sources_data     = load_sources()
 
+    # Hard block listesini prompt için hazırla - AI bu assetler için trade üretmeyecek
+    with hard_block_lock:
+        _blk = dict(HARD_BLOCK_ASSETS)
+    if _blk:
+        hard_block_ozet = "\n".join(
+            f"  ⛔ {sym}: {info.get('action','ALL')} YASAK — {info.get('reason','')[:50]}"
+            for sym, info in _blk.items()
+        )
+    else:
+        hard_block_ozet = "  (Yok - tüm assetler serbest)"
+
     # Kaynaklar: ilk 15 X hesabi + ilk 10 haber sitesi (token tasarrufu)
     x_list    = [x["handle"] for x in sources_data["x_accounts"][:15]]
     news_list = sources_data["news_sites"][:10]
@@ -5095,27 +5027,45 @@ Kimlik: Renaissance Technologies / Two Sigma seviyesinde veri odakli karar alici
 Cihat E. Cicek tarzi: direkt, ogretici, Turkce, piyasayi seven bir mentor.
 Fiat para = "kagit para" | Enflasyon = "sistematik hirsizlik"
 
-ÖNEMLİ HESAP KURALI - KALDIRAÇ DEVRE DIŞI (1:1 SİSTEM):
-Capital.com hesabında kaldıraç/leverage TAMAMEN KAPALI.
-Tüm işlemler 1:1 oranında gerçekleşir.
+CFD KALDIRAÇ SİSTEMİ - SIZE HESAPLAMA (ZORUNLU):
 
-SIZE HESAPLAMA KURALI (ZORUNLU):
-  Musait bakiye = aşağıda HESAP bölümünde verilir (Musait: X EUR)
-  Max pozisyon değeri = Musait EUR × Kelly% (örnek: 200 EUR × %5 = 10 EUR)
-  SIZE = Max pozisyon değeri ÷ Güncel fiyat
-  
-  Örnek GOLD (fiyat ~3300 USD):
-    Musait: 200 EUR, Kelly %5 → Max: 10 EUR → SIZE = 10 ÷ 3300 = 0.003
-    Min size 0.01 ise → SIZE = 0.01 (minimum kullan)
-  
-  Örnek SILVER (fiyat ~33 USD):
-    Musait: 200 EUR, Kelly %5 → Max: 10 EUR → SIZE = 10 ÷ 33 = 0.30
-  
-  Örnek BTC (fiyat ~85000 USD):
-    Musait: 200 EUR, Kelly %5 → Max: 10 EUR → SIZE = 10 ÷ 85000 = 0.0001
+Capital.com CFD hesabında kaldıraç aktiftir.
+Doktrin'deki kaldıraç oranlarını kullan. Doktrin yoksa varsayılan değerleri kullan.
 
-KURAL: SIZE × Güncel_Fiyat <= Musait_EUR × Kelly%
-Kaldıraç faktörü KULLANMA. Marjin riski YOK. Her şey 1:1.
+VARSAYILAN KALDIRAÇ ORANLARI (Doktrin'de belirtilmemişse):
+  Döviz (EURUSD, GBPUSD...): 1:30
+  Endeks (DE40, US500...):   1:20
+  Emtia (GOLD, SILVER...):   1:10
+  Ham Petrol, Doğalgaz:      1:10
+  Hisse Senedi:              1:5
+  Kripto (BTC, ETH...):      1:2
+
+SIZE HESAPLAMA FORMÜLÜ:
+  Marjin = Musait_EUR × Kelly%
+  Pozisyon_Değeri = Marjin × Kaldıraç
+  SIZE = Pozisyon_Değeri ÷ Güncel_Fiyat
+
+  Örnek GOLD (fiyat 3300, kaldıraç 1:10, musait 200 EUR, Kelly %5):
+    Marjin = 200 × 0.05 = 10 EUR
+    Pozisyon = 10 × 10 = 100 EUR
+    SIZE = 100 ÷ 3300 = 0.030 lot
+
+  Örnek BTC (fiyat 85000, kaldıraç 1:2, musait 200 EUR, Kelly %5):
+    Marjin = 200 × 0.05 = 10 EUR
+    Pozisyon = 10 × 2 = 20 EUR
+    SIZE = 20 ÷ 85000 = 0.00024 BTC
+
+  Örnek EURUSD (kaldıraç 1:30, musait 200 EUR, Kelly %5):
+    Marjin = 200 × 0.05 = 10 EUR
+    Pozisyon = 10 × 30 = 300 EUR
+    SIZE = 300 ÷ 1.08 = 277.7 → min_size kontrolü yap
+
+TRADE satırında LEVERAGE alanını da yaz:
+  TRADE: GOLD | SIDE: BUY | SIZE: 0.030 | SL: 3250.0 | TP: 3400.0 | LEVERAGE: 10
+  TRADE: BTC_USD | SIDE: BUY | SIZE: 0.00024 | SL: 82000 | TP: 90000 | LEVERAGE: 2
+
+KURAL: Marjin (SIZE × Fiyat ÷ Kaldıraç) <= Musait_EUR × Kelly%
+Risk yönetimi: SL, marjinin maksimum %50'sini kaybettirecek seviyeye koy.
 Mevcut Model: {current_model} | Backend: Gemini (gemini-3-flash-preview) + Groq (Llama4) fallback
 
 QUANT PROTOKOLÜ - SEN STAGE 2'SIN:
@@ -5339,6 +5289,11 @@ Robot Model: {current_model}"""
 
     full_prompt = f"""=== QUANT VERI PAKETI ===
 ZAMAN: {saat}:00 | HAFTASONU: {"EVET" if is_weekend() else "HAYIR"}
+
+⛔⛔ HARD BLOCK - KESİN YASAK ⛔⛔
+Aşağıdaki assetler için TRADE satırı YAZMA. Analiz bile yapma. Atla!
+{hard_block_ozet}
+Bu liste sistem hafızasından gelir. Kullanıcı açıkça "serbest" demeden geçersiz sayma!
 MAKRO REJiM: {macro_regime} | VOLATiLiTE: {vol_regime}
 KORKU/ACGOZLULUK: {fear_greed["value"]}/100 ({fear_greed["label"]})
 EKONOMIK TAKVIM: Sonraki olay={econ_cal["next_event"]} ({econ_cal["days_until"]} gun sonra)
@@ -5490,27 +5445,33 @@ DINAMIK DOKTRIN:
 Robot Model: {{model}}"""
 
     def _call_gemini(system_p, user_p):
-        """Gemini API cagrisi - sadece gemini-3-flash-preview."""
+        """Gemini API cagrisi - tum keyleri dene, quota dolunca siradakine gec."""
         if not GEMINI_KEYS: return None
-        key = GEMINI_KEYS[int(time.time() / 3600) % len(GEMINI_KEYS)]
-        try:
-            client = genai.Client(api_key=key)
-            # gemini-3-flash-preview Google Search destekliyor
-            cfg_kwargs = {
-                "system_instruction": system_p,
-                "tools": [types.Tool(google_search=types.GoogleSearch())]
-            }
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=user_p,
-                config=types.GenerateContentConfig(**cfg_kwargs)
-            )
-            logging.info("AI: Gemini gemini-3-flash-preview (Google Search aktif)")
-            _set_last_ai_backend("GEMINI", "gemini-3-flash-preview")
-            return "🟢 [GEMİNİ - gemini-3-flash-preview]\n" + response.text
-        except Exception as e:
-            logging.warning(f"Gemini hatasi: {e}")
-            return None
+        for i, key in enumerate(GEMINI_KEYS):
+            try:
+                client = genai.Client(api_key=key)
+                cfg_kwargs = {
+                    "system_instruction": system_p,
+                    "tools": [types.Tool(google_search=types.GoogleSearch())]
+                }
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=user_p,
+                    config=types.GenerateContentConfig(**cfg_kwargs)
+                )
+                logging.info(f"AI: Gemini key #{i+1}/{len(GEMINI_KEYS)} - gemini-3-flash-preview (Google Search aktif)")
+                _set_last_ai_backend("GEMINI", "gemini-3-flash-preview")
+                return "🟢 [GEMİNİ - gemini-3-flash-preview]\n" + response.text
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+                    logging.warning(f"Gemini key #{i+1} quota doldu, sonraki deneniyor...")
+                    continue
+                else:
+                    logging.warning(f"Gemini key #{i+1} hatasi: {e}")
+                    return None
+        logging.warning(f"Tum {len(GEMINI_KEYS)} Gemini key quota dolu!")
+        return None
 
     def _call_groq(system_p, user_p, model=None, task_type="complex_analysis"):
         """
@@ -5570,9 +5531,17 @@ Robot Model: {{model}}"""
                     return f"🟡 [GROQ - {model} (kisa)]\n" + resp2.choices[0].message.content
                 except Exception as e2:
                     logging.warning(f"Groq {model} kisa prompt da basarisiz: {e2}")
-            # 429 = rate limit veya 404 = model yok
+            # 429 = rate limit → key'i işaretle, sonraki key'e geç
             elif "429" in err:
-                logging.warning(f"Groq {model} rate limit - sonraki model deneniyor")
+                # Bekleme süresini parse et (retry-after varsa)
+                wait = 60
+                try:
+                    import re as _re2
+                    m = _re2.search(r"try again in ([\d\.]+)s", err)
+                    if m: wait = min(int(float(m.group(1))) + 5, 3600)
+                except: pass
+                groq_mark_rate_limited(wait)
+                logging.warning(f"Groq {model} rate limit → {wait}s sonra serbest, sonraki key devrede")
             elif "404" in err or "not exist" in err.lower():
                 logging.warning(f"Groq {model} mevcut degil - listeden cikar")
                 if model in GROQ_MODELS:
@@ -5640,7 +5609,7 @@ def fetch_chat_response(user_message: str) -> str:
     Beantwortet freie Textnachrichten über den Bot mit Gemini.
     Bezieht Portfolio + Kontostatus mit ein für Kontextfragen.
     """
-    h = capital_session.get_headers(ensure_account=True)  # Pozisyon bilgisi için doğru hesap
+    h = capital_session.get_headers()
     acc = get_account_info(h) if h else {"nakit": "?", "toplam": "?", "upl": "?", "marjin": "?", "musait": "?"}
     pozisyonlar = get_positions(h) if h else []
 
@@ -5670,18 +5639,27 @@ HESAP: Nakit={acc['nakit']}, UPL={acc['upl']}, Musait={acc['musait']} [1:1 - kal
 KULLANICI SORUSU: {user_message}"""
 
     # 1. Gemini dene
+    # 1. Gemini - key_1'den başla, quota dolunca sıradakine geç
     if GEMINI_KEYS:
-        try:
-            key = GEMINI_KEYS[int(time.time() / 3600) % len(GEMINI_KEYS)]
-            client = genai.Client(api_key=key)
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=full_prompt,
-                config=types.GenerateContentConfig(system_instruction=system_prompt)
-            )
-            return response.text
-        except Exception as e:
-            logging.warning(f"Chat Gemini hatasi: {e}")
+        for i, key in enumerate(GEMINI_KEYS):
+            try:
+                client = genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt)
+                )
+                logging.info(f"Chat: Gemini key #{i+1}/{len(GEMINI_KEYS)}")
+                return response.text
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+                    logging.warning(f"Chat Gemini key #{i+1} quota dolu, sonraki deneniyor...")
+                    continue
+                else:
+                    logging.warning(f"Chat Gemini key #{i+1} hatasi: {e}")
+                    break
+        logging.warning("Tum Gemini keyleri bitti → Groq fallback")
 
     # 2. Groq fallback
     groq_client = get_groq_client()
@@ -5896,7 +5874,8 @@ def pre_trade_backtest(symbol, epic, signal_side):
     }
 
 def execute_nexus_trade(analysis):
-    pattern = r"TRADE:\s*([\w\._]+)\s*\|\s*SIDE:\s*(BUY|SELL)\s*\|\s*SIZE:\s*([\d\.]+)\s*\|\s*SL:\s*([\d\.]+)\s*\|\s*TP:\s*([\d\.]+)"
+    # LEVERAGE opsiyonel - AI doktrine göre verir
+    pattern = r"TRADE:\s*([\w\._]+)\s*\|\s*SIDE:\s*(BUY|SELL)\s*\|\s*SIZE:\s*([\d\.]+)\s*\|\s*SL:\s*([\d\.]+)\s*\|\s*TP:\s*([\d\.]+)(?:\s*\|\s*LEVERAGE:\s*([\d\.]+))?"
     matches = re.findall(pattern, analysis)
 
     if not matches:
@@ -5910,7 +5889,7 @@ def execute_nexus_trade(analysis):
             logging.warning(f"Yanlış TRADE format: {analysis[idx:idx+80]}")
         return None
 
-    h = capital_session.get_headers(ensure_account=True)  # Trade öncesi hesap garantisi
+    h = capital_session.get_headers()
     if not h: return "❌ API bağlantı hatası"
 
     # DEPOT DD KONTROLU - Trade baslamadan once
@@ -5926,7 +5905,9 @@ def execute_nexus_trade(analysis):
     current_positions = get_positions(h)
     results = []
 
-    for sym, side, size, sl, tp in matches:
+    for match_tuple in matches:
+        sym, side, size, sl, tp = match_tuple[0], match_tuple[1], match_tuple[2], match_tuple[3], match_tuple[4]
+        leverage_ai = int(float(match_tuple[5])) if len(match_tuple) > 5 and match_tuple[5] else None
         sym = sym.upper().strip()
 
         # --- FUZZY SYMBOL MATCHING ---
@@ -5968,6 +5949,8 @@ def execute_nexus_trade(analysis):
 
         # --- HARD BLOCK CHECK (Kullanici talimati - Gemini override edemez!) ---
         hb, hb_reason = check_hard_block(sym, side)
+        if hb:
+            logging.info(f"HARD BLOCK aktif: {sym} {side} → atlandı ({hb_reason})")
         if hb:
             msg = f"⛔ HARD BLOCK {sym} ({side}): Kullanici talimati aktif — {hb_reason}"
             results.append(msg); logging.warning(msg); continue
@@ -6016,6 +5999,11 @@ def execute_nexus_trade(analysis):
 
                     # Bakiye yeterli mi? %10 tampon ekle
                     if musait < gerekli_teminat * 1.10:
+                        logging.warning(
+                            f"{sym}: Bakiye yetersiz! "
+                            f"Gerekli teminat={gerekli_teminat:.2f} EUR, "
+                            f"Musait={musait:.2f} EUR"
+                        )
                         # Bakiyeye gore max karsilanabilir size hesapla
                         max_karsilanabilir = (musait * 0.90) / guncel_fiyat
                         # min_size'in kati olarak yuvarla (asagi)
@@ -6236,10 +6224,19 @@ def execute_nexus_trade(analysis):
         except Exception as e:
             logging.warning(f"{sym} fiyat kontrolü başarısız: {e}")
 
+        # Kaldıraç bilgisini logla
+        if leverage_ai:
+            logging.info(f"{sym} LEVERAGE: 1:{leverage_ai} (AI doktrine göre belirledi)")
+        else:
+            logging.info(f"{sym} LEVERAGE: AI belirtmedi (hesap ayarları geçerli)")
+
         payload = {
-            "epic": epic, "direction": side.upper(),
-            "size": max(float(size), cfg["min_size"]),
-            "type": "MARKET", "stopLevel": sl_float, "profitLevel": tp_float
+            "epic":        epic,
+            "direction":   side.upper(),
+            "size":        max(float(size), cfg["min_size"]),
+            "type":        "MARKET",
+            "stopLevel":   sl_float,
+            "profitLevel": tp_float
         }
         r = requests.post(f"{CAPITAL_URL}/positions", json=payload, headers=h, timeout=10)
         if r.status_code == 200:
@@ -6308,7 +6305,7 @@ def handle_status(message):
 
 @bot.message_handler(commands=['pozisyon'])
 def handle_pozisyon(message):
-    h = capital_session.get_headers(ensure_account=True)  # Doğru hesap garantili
+    h = capital_session.get_headers()
     if not h:
         bot.send_message(MY_CHAT_ID, "❌ API bağlantısı kurulamadı")
         return
@@ -6557,7 +6554,11 @@ def handle_aidurum(message):
     backend, model = get_last_ai_info()
     cfg_backend, cfg_model = get_current_model_and_backend()
     gemini_status = f"✅ {len(GEMINI_KEYS)} key" if GEMINI_KEYS else "❌ Key yok"
-    groq_status   = f"✅ {len(GROQ_KEYS)} key" if GROQ_KEYS   else "❌ Key yok"
+    # Rate limited key var mı?
+    now_ts = time.time()
+    limited = sum(1 for t in _groq_rate_limited.values() if t > now_ts)
+    free    = len(GROQ_KEYS) - limited
+    groq_status = f"✅ {len(GROQ_KEYS)} key ({free} aktif, {limited} rate limited)" if GROQ_KEYS else "❌ Key yok"
     tg_status     = "❌ DEVRE DIŞI" if _tg_disabled else "✅ Aktif"
 
     msg = (
@@ -6687,13 +6688,30 @@ REPLY_BUTTON_MAP = {
     "📋 Menü":       "menu",
     "❓ Yardım":     "help",
     "🧮 Stats":      "stats",
+    # Alternatif yazımlar (emoji farklılığı için)
+    "📊 status":     "status",
+    "📍 pozisyon":   "pozisyon",
+    "📈 sinyaller":  "ma",
+    "Sinyaller":     "ma",
+    "sinyaller":     "ma",
 }
+
+def _normalize_button_text(text):
+    """Butondaki emoji + boşluk farklılıklarını normalize et."""
+    import unicodedata
+    # Unicode normalize
+    t = unicodedata.normalize('NFC', text.strip())
+    return t
 
 @bot.message_handler(func=lambda msg: msg.text and msg.text.strip() in REPLY_BUTTON_MAP)
 def handle_menu_button(message):
     """ReplyKeyboard butonlarindan gelen mesajlari ilgili komutlara yonlendir."""
     if str(message.chat.id) != str(MY_CHAT_ID): return
-    cmd = REPLY_BUTTON_MAP.get(message.text.strip())
+    raw = message.text.strip()
+    cmd = REPLY_BUTTON_MAP.get(raw) or REPLY_BUTTON_MAP.get(_normalize_button_text(raw))
+    # Son çare: içinde "sinyal" geçiyorsa ma komutu
+    if not cmd and "sinyal" in raw.lower():
+        cmd = "ma"
     handler_map = {
         "status":      handle_status,
         "pozisyon":    handle_pozisyon,
@@ -6784,6 +6802,118 @@ def handle_free_text(message):
     try:
         t = user_text.lower().strip()
 
+        # ---- 0. URL TESPİTİ - Link gönderildi mi? ----
+        import re as _re_url
+        urls_in_msg = _re_url.findall(
+            r'https?://[^\s<>"{}|\^`\[\]]+', user_text
+        )
+        if urls_in_msg:
+            def _fetch_user_links(urls, original_text):
+                """Kullanıcının gönderdiği linkleri çek ve DB'ye kaydet."""
+                kaydedilen = []
+                for url in urls[:3]:  # max 3 link
+                    try:
+                        bot.send_chat_action(MY_CHAT_ID, "typing")
+
+                        # X / Twitter linki mi?
+                        if "x.com/" in url or "twitter.com/" in url:
+                            # Nitter üzerinden oku
+                            nitter_bases = [
+                                "https://nitter.net",
+                                "https://nitter.privacydev.net",
+                                "https://nitter.poast.org",
+                            ]
+                            tweet_text = None
+                            for nb in nitter_bases:
+                                try:
+                                    # x.com/user/status/ID → nitter/user/status/ID
+                                    nitter_url = url.replace("x.com", nb.replace("https://","")).replace("twitter.com", nb.replace("https://",""))
+                                    nitter_url = nb + "/" + url.split("x.com/")[-1].split("twitter.com/")[-1]
+                                    r = requests.get(nitter_url, timeout=10,
+                                        headers={"User-Agent": "Mozilla/5.0"})
+                                    if r.status_code == 200:
+                                        # Tweet metnini parse et
+                                        import re as _rp
+                                        m = _rp.search(r'<div class="tweet-content[^"]*"[^>]*>(.*?)</div>', r.text, _rp.DOTALL)
+                                        if m:
+                                            import html as _html
+                                            tweet_text = _html.unescape(_rp.sub(r'<[^>]+>', '', m.group(1))).strip()
+                                            break
+                                except: continue
+
+                            if tweet_text and len(tweet_text) > 10:
+                                asset_tag = detect_asset_tag(tweet_text)
+                                sentiment, label = quick_sentiment(tweet_text)
+                                with db_lock:
+                                    conn = sqlite3.connect(DB_FILE)
+                                    conn.execute("""INSERT OR IGNORE INTO x_cache
+                                        (account, asset_tag, tweet_text, tweet_date, fetched_at, sentiment, sentiment_label)
+                                        VALUES (?,?,?,?,?,?,?)""",
+                                        ("USER_LINK", asset_tag,
+                                         tweet_text[:500], datetime.now().strftime("%Y-%m-%d"),
+                                         datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                         sentiment, label))
+                                    conn.commit(); conn.close()
+                                kaydedilen.append(f"🐦 Tweet kaydedildi ({asset_tag}): {tweet_text[:80]}...")
+                            else:
+                                kaydedilen.append(f"⚠️ Tweet okunamadı: {url[:50]}")
+
+                        else:
+                            # Haber / Web linki
+                            r = requests.get(url, timeout=15,
+                                headers={"User-Agent": "Mozilla/5.0"})
+                            if r.status_code == 200:
+                                import html as _html2
+                                import re as _rp2
+                                # Title
+                                t_m = _rp2.search(r'<title[^>]*>(.*?)</title>', r.text, _rp2.IGNORECASE | _rp2.DOTALL)
+                                title = _html2.unescape(t_m.group(1).strip()) if t_m else url
+                                title = _rp2.sub(r'\s+', ' ', title)[:150]
+                                # İçerik - paragrafları al
+                                paras = _rp2.findall(r'<p[^>]*>(.*?)</p>', r.text, _rp2.DOTALL)
+                                body_parts = []
+                                for p in paras[:15]:
+                                    text = _html2.unescape(_rp2.sub(r'<[^>]+>', '', p)).strip()
+                                    if len(text) > 50:
+                                        body_parts.append(text)
+                                body = " ".join(body_parts)[:1000]
+                                full_content = f"{title}. {body}"
+                                asset_tag = detect_asset_tag(full_content)
+                                sentiment, label = quick_sentiment(full_content)
+                                with db_lock:
+                                    conn = sqlite3.connect(DB_FILE)
+                                    conn.execute("""INSERT OR IGNORE INTO news_cache
+                                        (source, source_type, asset_tag, title, url, summary,
+                                         published_at, fetched_at, sentiment, sentiment_label, importance)
+                                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                                        ("USER_LINK", "USER", asset_tag,
+                                         title[:200], url, body[:500],
+                                         datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                         datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                         sentiment, label, 3))  # importance=3 (yüksek)
+                                    conn.commit(); conn.close()
+                                kaydedilen.append(f"📰 Haber kaydedildi ({asset_tag}): {title[:80]}")
+                            else:
+                                kaydedilen.append(f"⚠️ Link açılamadı (HTTP {r.status_code}): {url[:50]}")
+
+                    except Exception as le:
+                        logging.warning(f"Link fetch hatası {url}: {le}")
+                        kaydedilen.append(f"⚠️ Hata: {url[:50]}")
+
+                ozet = "\n".join(kaydedilen)
+                tg_safe_send(
+                    f"🔗 {len(kaydedilen)} link işlendi:\n{ozet}\n\n"
+                    f"✅ Bir sonraki analizde AI bu içeriği kullanacak.\n"
+                    f"Hemen analiz için /status yazabilirsin."
+                )
+
+            threading.Thread(
+                target=_fetch_user_links,
+                args=(urls_in_msg, user_text),
+                daemon=True
+            ).start()
+            return
+
         # ---- 1. HARD BLOCK / UNBLOCK ----
         asset_sym_blk, action_blk, block_type = parse_hard_block(user_text)
         if asset_sym_blk and block_type == "UNBLOCK":
@@ -6823,7 +6953,7 @@ def handle_free_text(message):
         # Kapat komutu: asset + (kapat VEYA sat VEYA al) ama long/short YOK
         if detected_asset and (is_close or is_sell or is_buy) and not is_long and not is_short:
             try:
-                h = capital_session.get_headers(ensure_account=True)  # Kullanıcı komutu için
+                h = capital_session.get_headers()
                 if not h:
                     bot.send_message(MY_CHAT_ID, "❌ API bağlantı hatası"); return
                 positions = get_positions(h)
@@ -6905,11 +7035,30 @@ def handle_free_text(message):
             ).start()
             return
 
-        # ---- 4. SADECE BİLGİ ----
+        # ---- 4. SORU / SERBEST METIN → AI cevap versin ----
+        # Not olarak da kaydet
         db_gemini_write("USER_INFO", user_text[:500], symbol=None, cycle=0)
-        bot.send_message(MY_CHAT_ID,
-            "📝 Notun kaydedildi. Bir sonraki analizde (maks 30 dk) Gemini kullanacak.\n"
-            "Quota harcanmadi.")
+
+        # Soru işareti var mı veya bilgi sorusu mu?
+        soru_kelimeleri = ["?", "ne ", "neden", "nasıl", "nedir", "kaç", "hangi",
+                           "düşün", "analiz", "görüş", "tavsiye", "öner",
+                           "was ", "wie ", "warum", "was ist", "meinst", "denkst",
+                           "think", "what", "how", "why", "analyze", "opinion"]
+        is_question = any(kw in user_text.lower() for kw in soru_kelimeleri)
+
+        if is_question or len(user_text) > 10:
+            # AI ile konuş - thread'de çalıştır
+            def _ai_chat():
+                try:
+                    bot.send_chat_action(MY_CHAT_ID, "typing")
+                    cevap = fetch_chat_response(user_text)
+                    tg_safe_send(f"🤖 {cevap[:4000]}")
+                except Exception as ce:
+                    logging.error(f"AI chat hatasi: {ce}")
+                    tg_safe_send("⚠️ AI şu an cevap veremedi.")
+            threading.Thread(target=_ai_chat, daemon=True).start()
+        else:
+            tg_safe_send("📝 Not kaydedildi. Bir sonraki analizde kullanılacak.")
 
     except Exception as e:
         logging.error("handle_free_text: " + str(e))
@@ -6976,7 +7125,7 @@ def schutz_loop():
     time.sleep(30)
     while True:
         try:
-            h = capital_session.get_headers(ensure_account=True)  # Koruma için doğru hesap
+            h = capital_session.get_headers()
             if h:
                 kapatilanlar = volatilite_kontrol(h)
                 if kapatilanlar:
@@ -6999,7 +7148,7 @@ def main_loop():
         try:
             dongu_sayaci += 1
             spread_scan_counter += 1
-            h = capital_session.get_headers(ensure_account=True)  # Her döngüde hesap garantisi
+            h = capital_session.get_headers()
 
             if not h:
                 logging.error("API bağlantısı yok, 60s bekleniyor")
