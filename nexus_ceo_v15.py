@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# NEXUS CEO v14.2 - QUANT FUND EDITION
+# NEXUS CEO v15 - QUANT FUND EDITION
 # Hibrit AI: Gemini (gemini-3-flash-preview) + Groq (Llama 4) fallback
 # Telegram Watchdog: Telegram olmadan trading devam eder
 # Trailing SL: Pyramiding pozisyonlari %1.5 trailing stop
