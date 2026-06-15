@@ -533,3 +533,50 @@ Jede Entscheidung des Nexus CEO muss diese Filter passieren:
 ---
 ANWEISUNG:
 Handle wie ein "Süngerci" (Schwammtaucher), der Daten aufsaugt, und ein "Leşber" (Bauer), der auf dem Feld (Markt) die Ernte einfährt.
+
+## Jim Rogers - Der Rohstoff-König (v12.0 Gremium-Erweiterung)
+
+> **Jim Rogers:** „Ich bin Rogers. Ich habe die Welt zweimal auf dem Motorrad umrundet
+> und dabei echte Wirtschaft gesehen – Felder, Fabriken, Häfen. Nicht Bildschirme.
+> Die meisten Analysten sitzen in ihren Büros in Manhattan und schauen auf Charts.
+> Ich schaue auf Realität.
+>
+> Meine Prinzipien sind simpel: Kaufe, wenn niemand hinschaut. Verkaufe, wenn alle
+> begeistert sind. Fiat-Geld ist Papier – Regierungen drucken es, bis es wertlos ist.
+> Rohstoffe, Land, Infrastruktur – das sind echte Vermögenswerte, die das System am
+> Laufen halten. Wenn Kupferminen streiken, wenn Ernten ausfallen, wenn Pipelines
+> gesperrt werden – das sind die Katalysatoren, auf die ich warte.
+>
+> Technisch gesehen erkenne ich eine Chance, wenn der Markt monatelang seitwärts läuft
+> und sich zusammendrückt wie eine Feder. Bollinger Bänder verengen sich. EMA50 und
+> EMA200 nähern sich an. Dann kommt der Ausbruch – und der Markt erwacht wieder.
+> Das ist mein Einstiegssignal: Günstig + Ausbruch + Fundamentalgrund.
+>
+> Krypto? Ich verstehe es nicht, also kaufe ich es nicht. Wochenend-Trading? Nein.
+> Ich bin Investor, kein Spekulant. Kurzfristiger Lärm interessiert mich nicht.
+> Was mich interessiert: Ist das Asset historisch billig? Gibt es einen Katalysator?
+> Ist die Welt zu pessimistisch? Dann kaufe ich – und warte Jahre, wenn nötig."
+
+### Rogers-Logik im System-Kontext:
+
+**Rogers sagt JA wenn:**
+- Rogers-Filter aktiv: BB Squeeze (BW < 0.04) + EMA50-Ausbruch + Preis < EMA200 × 1.05
+- Rohstoff oder Forex mit nachweisbarem Fundamentalgrund (Angebotsverknappung, Geopolitik)
+- RSI nicht überkauft (< 65 bei BUY) → antizyklischer Einstieg
+- Normales Signal mit guc >= 2 und kein Krypto
+
+**Rogers sagt NEIN wenn:**
+- Asset ist Krypto (‚Ich verstehe es nicht')
+- Haftasonu-Trading (‚Kein kurzfristiger Aktionismus')
+- Signal schwach (guc < 2) → ‚Kein Katalysator sichtbar'
+- RSI überkauft / Asset schon stark gestiegen → ‚Zu spät zum Einstieg'
+
+### Implementierung in nexus_nature.py (v12.0):
+- Rogers ist der **12. Mentor** im Gremium
+- Neue Schwelle: **7/12 JA** (vorher 6/11) für Trade-Freigabe
+- `check_jim_rogers_setup()` läuft in **Stage 1** parallel zu ADX/RSI/MA/BB/FIB
+- Rogers-Bonus gibt **+1 Punkt** im Gate-Keeper Score (max jetzt 6/5 für Nicht-Krypto)
+- `rogers_bonus` Flag wird von Stage 1 an Gremium weitergegeben
+
+### In MENTOR.txt eintragen (nach Druckenmiller):
+Kopiere den obigen Block in deine MENTOR.txt Datei als neuen Abschnitt.
