@@ -1,6 +1,6 @@
-# NEXUS CEO – Operating Manual (v15.19)
+# NEXUS CEO – Operating Manual (v15.20)
 
-NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.19 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
+NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.20 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
 
 Other languages: [Deutsch](MANUAL.de.md) · [Türkçe](MANUAL.tr.md)
 
@@ -8,7 +8,7 @@ Other languages: [Deutsch](MANUAL.de.md) · [Türkçe](MANUAL.tr.md)
 
 You need a computer that runs all the time (for example a Raspberry Pi), Python 3.10 or newer (tested with 3.11), a Capital.com account and your own Telegram bot.
 
-1. Put the files in a folder, for example `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `requirements.txt`, `.env.example`. Optional: `capital_markets_config.py` with the list of your markets. If it is missing, the bot trades a built-in list of nine markets (EUR/USD, Gold, Silver, Crude, Brent, BTC, ETH, XRP, SOL).
+1. Put the files in a folder, for example `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `nexus_diagnose.py`, `requirements.txt`, `.env.example`. Optional: `capital_markets_config.py` with the list of your markets. If it is missing, the bot trades a built-in list of nine markets (EUR/USD, Gold, Silver, Crude, Brent, BTC, ETH, XRP, SOL).
 2. Install the Python packages: `pip install -r requirements.txt`
 3. Create a Telegram bot: message `@BotFather` in Telegram, send `/newbot`, and keep the token.
 4. Capital.com: create an API key in the account settings. You set a separate password for the key when you do this. The `.env` needs the key (`CAPITAL_API_KEY`), your login email (`CAPITAL_IDENTIFIER`) and the password (`CAPITAL_PASSWORD`). Which password Capital.com expects here (the key's or the account's) is described in the Capital.com API guide; if the bot's login is rejected, try the other one. Use the demo account to begin with.
@@ -68,6 +68,7 @@ The bot accepts commands, text and buttons only from the chat `MY_CHAT_ID`. It i
 | `/blocks` | 🔒 Blocks | Active trading blocks |
 | `/volatility` | – | Run the Black Swan check now |
 | `/update_models` | – | Fetch the Gemini model list again; shows the chain and the keys rejected by Google |
+| `/diagnosis` | 🔎 Diagnosis | Diagnosis of the last 7 days: summary as a message, full report as a text file. `/diagnosis 3` = 3 days only. Read-only |
 | `/language` | – | Choose the language |
 | `/help` | 📋 Menu | Command overview |
 
@@ -389,6 +390,7 @@ The bot writes the state files itself; do not edit them by hand while it is runn
 | --- | --- | --- |
 | `nexus_ceo.py` | The program | No |
 | `nexus_lang.py` | Texts in German, English, Turkish | No; without it the bot sends the original texts |
+| `nexus_diagnose.py` | Diagnosis script, read-only. Runs through `/diagnosis` or in a terminal with `python3 nexus_diagnose.py` | Yes; `/diagnosis` then reports that the file is missing |
 | `.env` | Settings and credentials | No |
 | `capital_markets_config.py` | Symbols, epics, minimum sizes, spreads (optional) | Yes; the bot then trades the built-in list of nine markets |
 | `nexus_ceo.log` | Log. Rotates at midnight, 7 days are kept | Yes, old days |
@@ -407,7 +409,7 @@ The bot loads three lists from the public repository `KhungFu/kisilerim` when it
 
 ## 13. Update and rollback
 
-An update consists of `nexus_ceo.py` and `nexus_lang.py`. The two belong together.
+An update consists of `nexus_ceo.py`, `nexus_lang.py` and `nexus_diagnose.py`. The three belong together; the commands below apply to each of the files.
 
 ```bash
 cp nexus_ceo.py nexus_ceo.py.bak

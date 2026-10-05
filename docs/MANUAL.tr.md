@@ -1,6 +1,6 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.19)
+# NEXUS CEO – Kullanım Kılavuzu (v15.20)
 
-NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.19 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
+NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.20 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
 Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
@@ -8,7 +8,7 @@ Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
 Sürekli çalışan bir bilgisayara (örneğin bir Raspberry Pi), Python 3.10 veya daha yenisine (3.11 ile test edildi), bir Capital.com hesabına ve kendi Telegram botuna ihtiyacın var.
 
-1. Dosyaları bir klasöre koy, örneğin `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `requirements.txt`, `.env.example`. İsteğe bağlı olarak: piyasalarının listesini içeren `capital_markets_config.py`. Bu dosya yoksa bot, dokuz piyasalık yerleşik listeyle işlem yapar (EUR/USD, altın, gümüş, Crude, Brent, BTC, ETH, XRP, SOL).
+1. Dosyaları bir klasöre koy, örneğin `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `nexus_diagnose.py`, `requirements.txt`, `.env.example`. İsteğe bağlı olarak: piyasalarının listesini içeren `capital_markets_config.py`. Bu dosya yoksa bot, dokuz piyasalık yerleşik listeyle işlem yapar (EUR/USD, altın, gümüş, Crude, Brent, BTC, ETH, XRP, SOL).
 2. Python paketlerini kur: `pip install -r requirements.txt`
 3. Telegram botunu oluştur: Telegram'da `@BotFather` ile yazış, `/newbot` gönder, token'ı sakla.
 4. Capital.com: hesabının ayarlarından bir API anahtarı oluştur. Bu sırada anahtar için ayrı bir parola belirlersin. `.env` dosyasına anahtarı (`CAPITAL_API_KEY`), giriş e-postanı (`CAPITAL_IDENTIFIER`) ve parolayı (`CAPITAL_PASSWORD`) yaz. Capital.com'un burada hangi parolayı beklediği (anahtarın parolası mı, hesabın parolası mı) Capital.com'un API kılavuzunda yazar; bot girişi reddederse diğerini dene. Başlangıçta demo hesabı kullan.
@@ -68,6 +68,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | `/bloklar` | 🔒 Bloklar | Etkin HARD BLOCK'lar (işlem engelleri) |
 | `/volatilite` | – | Kara Kuğu denetimini şimdi çalıştır |
 | `/update_models` | – | Gemini model listesini yeniden al; zinciri ve Google'ın reddettiği anahtarları gösterir |
+| `/teshis` | 🔎 Teşhis | Son 7 günün teşhisi: özet mesaj olarak, tam rapor metin dosyası olarak. `/teshis 3` = yalnızca 3 gün. Yalnızca okur |
 | `/dil` | – | Dil seç |
 | `/yardim` | 📋 Menü | Komut özeti |
 
@@ -389,6 +390,7 @@ Durum dosyalarını bot kendisi yazar; bot çalışırken onları elle düzenlem
 | --- | --- | --- |
 | `nexus_ceo.py` | Program | Hayır |
 | `nexus_lang.py` | Almanca, İngilizce, Türkçe metinler | Hayır; onsuz bot özgün metinleri gönderir |
+| `nexus_diagnose.py` | Teşhis betiği, yalnızca okur. `/teshis` ile ya da terminalde `python3 nexus_diagnose.py` ile çalışır | Evet; o zaman `/teshis` dosyanın eksik olduğunu bildirir |
 | `.env` | Ayarlar ve erişim bilgileri | Hayır |
 | `capital_markets_config.py` | Semboller, epic'ler, asgari büyüklükler, spread'ler (isteğe bağlı) | Evet; bot o zaman dokuz piyasalık yerleşik listeyle işlem yapar |
 | `nexus_ceo.log` | Log. Gece yarısı yeni dosyaya geçer, 7 gün saklanır | Evet, eski günler |
@@ -407,7 +409,7 @@ Bot üç listeyi kendi klasöründen değil, gerektiğinde herkese açık `Khung
 
 ## 13. Güncelleme ve geri alma
 
-Bir güncelleme `nexus_ceo.py` ve `nexus_lang.py` dosyalarından oluşur. İkisi bir bütündür.
+Bir güncelleme `nexus_ceo.py`, `nexus_lang.py` ve `nexus_diagnose.py` dosyalarından oluşur. Üçü bir bütündür; aşağıdaki komutlar her dosya için geçerlidir.
 
 ```bash
 cp nexus_ceo.py nexus_ceo.py.bak

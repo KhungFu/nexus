@@ -3,6 +3,10 @@
 # |  NEXUS NATURE v15.8 - BRIDGEWATER EDITION                          |
 # |  Datei: nexus_ceo.py                                                |
 # |  Erstellt: 2026-07-14  |  Zuletzt geaendert: 2026-09-21            |
+# |  Aenderungen v15.20 (2026-10-06):                                   |
+# |    - /diagnose (/diagnosis, /teshis) und Taste: startet            |
+# |      nexus_diagnose.py (eigene Datei, nur lesend) und schickt die  |
+# |      Kurzfassung als Nachricht, den ganzen Bericht als Datei       |
 # |  Aenderungen v15.19 (2026-10-05):                                   |
 # |    - Sprachen: Deutsch / English / Tuerkce. Sprachwahl beim ersten  |
 # |      Start per Telegram, Wahl steht als BOT_LANGUAGE in der .env;   |
@@ -805,7 +809,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.19"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v15.20"                                       # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -8619,6 +8623,74 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
 # ============================================================
 # TELEGRAM KOMMANDOS (/ Befehle)
 # ============================================================
+# ============================================================
+# v15.20: /diagnose - Bericht von nexus_diagnose.py per Telegram
+# ------------------------------------------------------------
+# nexus_diagnose.py liegt als eigene Datei neben nexus_ceo.py (wie nexus_lang.py) und
+# liest nur. Der Bot startet es als eigenen Prozess: Die Kurzfassung kommt als Nachricht,
+# der ganze Bericht als Textdatei. Aufruf: /diagnose  oder  /diagnose 3  (Tage, 1-30).
+# ============================================================
+_DIAG_LOCK = threading.Lock()
+_DIAG_TIMEOUT = 240
+
+
+def _diagnose_lauf(tage):
+    pfad = os.path.join(BASE_DIR, "nexus_diagnose.py")
+    if not os.path.isfile(pfad):
+        bot.send_message(MY_CHAT_ID, "⚠️ nexus_diagnose.py fehlt im Bot-Ordner - Diagnose nicht möglich.")
+        return
+    if not _DIAG_LOCK.acquire(blocking=False):
+        bot.send_message(MY_CHAT_ID, "🔎 Diagnose läuft schon - bitte warten.")
+        return
+    try:
+        import subprocess as _sp
+        import io as _io
+        bot.send_message(MY_CHAT_ID, f"🔎 Diagnose läuft ({tage} Tage) ... das dauert bis zu einer Minute.")
+        sprache = BOT_LANGUAGE if BOT_LANGUAGE in ("de", "en", "tr") else "de"
+        try:
+            lauf = _sp.run([sys.executable, pfad, "--dir", BASE_DIR, "--days", str(tage), "--lang", sprache],
+                           capture_output=True, text=True, timeout=_DIAG_TIMEOUT)
+        except _sp.TimeoutExpired:
+            bot.send_message(MY_CHAT_ID, f"⚠️ Diagnose abgebrochen: nach {_DIAG_TIMEOUT} Sekunden nicht fertig.")
+            return
+        bericht = lauf.stdout or ""
+        if not bericht.strip():
+            grund = (lauf.stderr or "keine Ausgabe").strip().splitlines()[-1][:200]
+            bot.send_message(MY_CHAT_ID, f"⚠️ Diagnose fehlgeschlagen: {grund}")
+            return
+        # Kurzfassung = alles nach der Zeile KURZFASSUNG (steht schon in der gewaehlten Sprache)
+        kurz, zeilen = "", bericht.splitlines()
+        for i, z in enumerate(zeilen):
+            if z.strip() == "KURZFASSUNG":
+                kurz = "\n".join(x for x in zeilen[i + 2:] if x.strip() and x.strip() != "Fertig.")
+        if kurz:
+            for i in range(0, len(kurz), 3900):
+                _bot_send_raw(MY_CHAT_ID, kurz[i:i + 3900])
+        datei = _io.BytesIO(bericht.encode("utf-8"))
+        datei.name = "nexus_diagnose_%s.txt" % datetime.now().strftime("%Y%m%d_%H%M")
+        bot.send_document(MY_CHAT_ID, datei, caption=L("Vollständiger Diagnose-Bericht (auf Deutsch)"))
+        logging.info(f"Diagnose gesendet: {tage} Tage, {len(zeilen)} Zeilen")
+    except Exception as e:
+        logging.error(f"Diagnose: {e}")
+        try:
+            bot.send_message(MY_CHAT_ID, f"⚠️ Diagnose fehlgeschlagen: {str(e)[:200]}")
+        except Exception:
+            pass
+    finally:
+        _DIAG_LOCK.release()
+
+
+@bot.message_handler(commands=CMD('diagnose'))
+def handle_diagnose(message):
+    """v15.20: /diagnose [Tage] - Diagnose-Bericht per Telegram (auch ueber die Taste)."""
+    teile = (message.text or "").split()
+    try:
+        tage = max(1, min(30, int(teile[1]))) if len(teile) > 1 else 7
+    except ValueError:
+        tage = 7
+    threading.Thread(target=_diagnose_lauf, args=(tage,), daemon=True).start()
+
+
 @bot.message_handler(commands=CMD('sprache') + ['start'])
 def handle_sprache(message):
     """v15.19: /sprache, /language, /dil -> Sprache waehlen.
@@ -9500,6 +9572,7 @@ def handle_free_text(message):
         "🧮 Stats":      handle_stats,
         "💸 Kayip":      handle_kayip,
         "🔒 Bloklar":    handle_bloklar,
+        "🔎 Diagnose":   handle_diagnose,   # v15.20
     }
     # Tam eşleşme veya içerik eşleşmesi (buton metninin büyük/küçük harf/boşluk varyasyonları)
     matched_handler = BUTTON_MAP.get(user_text)

@@ -27,6 +27,7 @@ Tüm komutlar, ayarlar ve bilinen sınırlar kılavuzda:
 | --- | --- |
 | `nexus_ceo.py` | Bot |
 | `nexus_lang.py` | Tüm Telegram metinleri: Almanca, İngilizce, Türkçe |
+| `nexus_diagnose.py` | Yalnızca okuyan teşhis: sürüm, ayarlar, log, pozisyon başına sonuç. Telegram'da `/teshis` gönder ya da `python3 nexus_diagnose.py` çalıştır |
 | `.env.example` | Ayarların için şablon. `.env` olarak kopyala |
 | `requirements.txt` | Python paketleri |
 | `systemd/nexus_ceo.service.example` | Botu servis olarak çalıştırmak için şablon |
