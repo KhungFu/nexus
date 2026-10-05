@@ -33,7 +33,8 @@ Tüm komutlar, ayarlar ve bilinen sınırlar kılavuzda:
 | `docs/` | Üç dilde kılavuz |
 | `capital_markets_config.py` | Piyasa listesi: semboller, epic'ler, asgari büyüklükler, spread'ler. Bu dosya yoksa bot, içine gömülü dokuz piyasalık listeyi işler |
 | `market_scanner.py` | `capital_markets_config.py` dosyasını kendi Capital.com hesabından yeniden üretir |
-| `mentor_name.txt`, `toplam_egitim.txt`, `Abfrage_Quellen.txt`, `NewsVerlage.txt`, `Audiobooks.txt`, `Bot_egitim_videolari.txt` | Doktrin ve kaynak listeleri. Bir iş akışı bunları herkese açık `KhungFu/kisilerim` deposuna kopyalar; bot ilk üçünü çalışırken oradan okur, kendi klasöründen değil |
+| `hesap_bul.py` | Capital.com girişini sınar, demo ve canlı hesaplarını listeler. Sondaki `CAPITAL_ACCOUNT_ID` ve `IS_DEMO` notu eski bir sürümden kalma; bot `CAPITAL_URL` kullanır |
+| `mentor_name.txt`, `toplam_egitim.txt`, `Abfrage_Quellen.txt`, `NewsVerlage.txt`, `Audiobooks.txt`, `Bot_egitim_videolari.txt` | Doktrin ve kaynak listeleri. Herkese açık `KhungFu/kisilerim` deposu bunları saatte bir buradan çeker; bot ilk üçünü çalışırken oradan okur, kendi klasöründen değil |
 
 ## Anahtarların gizli kalır
 

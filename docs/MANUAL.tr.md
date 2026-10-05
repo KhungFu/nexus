@@ -403,7 +403,7 @@ Durum dosyalarını bot kendisi yazar; bot çalışırken onları elle düzenlem
 
 ### GitHub'dan gelen listeler
 
-Bot üç listeyi kendi klasöründen değil, gerektiğinde herkese açık `KhungFu/kisilerim` deposundan yükler: `mentor_name.txt` (işlem doktrini; ilk 3000 karakter yapay zekâ talimatına eklenir), `toplam_egitim.txt` ve `Abfrage_Quellen.txt` (haber toplama için haber siteleri ve X hesapları). Böylece her kurulum aynı listeleri kullanır. GitHub'a ulaşılamazsa bot onlarsız devam eder. Listeler `nexus` deposunda tutulur; bir GitHub iş akışı her push'ta onları `kisilerim` deposuna kopyalar.
+Bot üç listeyi kendi klasöründen değil, gerektiğinde herkese açık `KhungFu/kisilerim` deposundan yükler: `mentor_name.txt` (işlem doktrini; ilk 3000 karakter yapay zekâ talimatına eklenir), `toplam_egitim.txt` ve `Abfrage_Quellen.txt` (haber toplama için haber siteleri ve X hesapları). Böylece her kurulum aynı listeleri kullanır. GitHub'a ulaşılamazsa bot onlarsız devam eder. Listeler `nexus` deposunda tutulur; `kisilerim` onları oradan saatte bir çeker.
 
 ## 13. Güncelleme ve geri alma
 
@@ -469,6 +469,7 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 
 - **Gasoline kripto sayılır.** GASOLINE adı “SOL” içerir. Bu yüzden bot pozisyon büyüklüğünü yarıya indirir, 5 Kurul oyundan yalnızca 3'ünü ister ve kripto kurallarını hafta sonu da dahil uygular.
 - **Yarıya indirme yalnızca dört coin için.** BTC, ETH, SOL ve XRP'de yarıya indirilir. Diğer coin'ler tam büyüklükle çalışır.
+- **On iki coin kripto sayılmaz.** Bot kriptoyu sabit bir ad listesinden tanır. Birlikte gelen piyasa listesindeki AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX ve XTZ bu listede yok. Bunlara emtia kuralları uygulanır: 5 Kurul oyundan 4'ü ve hafta sonu işlem yok.
 - **Korelasyon denetlenmez.** Crude, Heating Oil ve Gasoline gibi akraba piyasalar bağımsız pozisyon sayılır.
 - **5 pozisyondan itibaren yön değiştirme yok.** 5 veya daha fazla açık pozisyonda bot, bir sinyal mevcut bir pozisyonun yönünü değiştirecek olsa bile her denetimden önce durur.
 - **Bot veritabanındaki istatistik ve günlük hedef eksiktir.** Veritabanı yalnızca botun kendisinin tetiklediği kapanışları bilir. Esas alınacak olan Capital uygulamasındaki dökümdür.
