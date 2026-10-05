@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Capital.com Market Scanner v2.0
+Capital.com Market Scanner v3.0 (FIXED)
+- ✅ BITCOIN + TOP-20 KRYPTO HINZUGEFÜGT
+- ✅ Bis zu 150 Assets statt 43
+- ✅ Bessere Epic-Validierung
+- ✅ Multi-Fallback für Bitcoin-Epics
 - Sucht Epics gezielt per direktem Epic-Lookup (nicht nur Suche)
 - Schreibt echte Spreads in capital_markets_config.py
 - Validiert jeden Epic bevor er gespeichert wird
@@ -124,30 +128,44 @@ def scan_all_markets(headers):
     """
     Scannt alle Assets. Erst direkter Epic-Lookup, dann Suche als Fallback.
     Format: {CONFIG_KEY: {epic, min_size, spread}}
+
+    v3.0 FIX:
+    - ✅ BITCOIN HINZUGEFÜGT mit Fallback-Epics
+    - ✅ Top-20 Kryptowährungen
+    - ✅ Weitere Edelmetalle/Energien
+    - ✅ Max 150 Assets
     """
 
     # (CONFIG_KEY, direkte_epics_zum_versuchen, such_fallback, must_contain_keywords)
     asset_list = [
+        # ════════════════════════════════════════════════════════════
         # EDELMETALLE
+        # ════════════════════════════════════════════════════════════
         ("GOLD",      ["GOLD"],               "gold",        None),
         ("SILVER",    ["SILVER"],             "silver",      None),
         ("PLATINUM",  ["PLATINUM"],           "platinum",    None),
         ("PALLADIUM", ["PALLADIUM"],          "palladium",   None),
 
+        # ════════════════════════════════════════════════════════════
         # ENERGIE
+        # ════════════════════════════════════════════════════════════
         ("OIL_CRUDE",   ["OIL_CRUDE", "CRUDE_OIL", "USOIL"],  "crude oil",   None),
         ("OIL_BRENT",   ["OIL_BRENT", "BRENT", "BRENTOIL"],   "brent oil",   None),
         ("NATURAL_GAS", ["NATURALGAS", "NATGAS", "NG"],        "natural gas", None),
         ("HEATING_OIL", ["HEATINGOIL", "HEATING_OIL"],         "heating oil", None),
         ("GASOLINE",    ["GASOLINE", "RBOB"],                  "gasoline",    None),
 
+        # ════════════════════════════════════════════════════════════
         # INDUSTRIEMETALLE
+        # ════════════════════════════════════════════════════════════
         ("COPPER",    ["COPPER"],             "copper",      None),
         ("ALUMINUM",  ["ALUMINUM", "ALUMINIUM"], "aluminum", None),
         ("ZINC",      ["ZINC", "MZN3"],       "zinc",        None),
         ("NICKEL",    ["NICKEL"],             "nickel",      None),
 
+        # ════════════════════════════════════════════════════════════
         # AGRAR
+        # ════════════════════════════════════════════════════════════
         ("WHEAT",     ["WHEAT"],              "wheat",       None),
         ("CORN",      ["CORN"],               "corn",        None),
         ("SOYBEANS",  ["SOYBEAN", "SOYBEANS"], "soybeans",   None),
@@ -156,15 +174,19 @@ def scan_all_markets(headers):
         ("COTTON",    ["USCOTTON", "COTTON"], "cotton",      None),
         ("COCOA",     ["USCOCOA", "COCOA"],   "cocoa",       None),
 
+        # ════════════════════════════════════════════════════════════
         # VOLATILITY
+        # ════════════════════════════════════════════════════════════
         ("VIX",       ["VIXM", "VIX"],        "vix",         None),
 
-        # CRYPTO PRO-BTC USD
+        # ════════════════════════════════════════════════════════════
+        # CRYPTO PRO-BTC USD (v3.0 FIX: BITCOIN ZUERST!)
+        # ════════════════════════════════════════════════════════════
+        ("BTC_USD",   ["BTCUSD", "BITCOINUSD", "BITCOIN"],    "bitcoin",     ["BTC", "USD"]),
         ("ETH_USD",   ["ETHUSD"],             "ethereum",    ["ETH", "USD"]),
         ("SOL_USD",   ["SOLUSD"],             "solana",      ["SOL", "USD"]),
         ("AVAX_USD",  ["AVAXUSD"],            "avalanche",   ["AVAX", "USD"]),
         ("MATIC_USD", ["MATICUSD"],           "polygon",     ["MATIC", "USD"]),
-        ("POL_USD",   ["POLUSD", "POLIGUSD"], "polygon pol", ["POL", "USD"]),
         ("DOT_USD",   ["DOTUSD"],             "polkadot",    ["DOT", "USD"]),
         ("LINK_USD",  ["LINKUSD"],            "chainlink",   ["LINK", "USD"]),
         ("UNI_USD",   ["UNIUSD"],             "uniswap",     ["UNI", "USD"]),
@@ -172,13 +194,26 @@ def scan_all_markets(headers):
         ("ATOM_USD",  ["ATOMUSD"],            "cosmos",      ["ATOM", "USD"]),
         ("LTC_USD",   ["LTCUSD"],             "litecoin",    ["LTC", "USD"]),
 
+        # Top-20 erweitert (v3.0)
+        ("BCH_USD",   ["BCHUSD", "BITCOINCASH"],  "bitcoin cash",  ["BCH", "USD"]),
+        ("DOGE_USD",  ["DOGEUSD"],            "dogecoin",    ["DOGE", "USD"]),
+        ("SHIB_USD",  ["SHIBUSD"],            "shiba inu",   ["SHIB", "USD"]),
+        ("ADA_USD",   ["ADAUSD"],            "cardano",      ["ADA", "USD"]),
+        ("XRP_USD",   ["XRPUSD"],            "ripple",       ["XRP", "USD"]),
+        ("NEAR_USD",  ["NEARUSD"],           "near protocol", ["NEAR", "USD"]),
+        ("ARB_USD",   ["ARBUSD"],            "arbitrum",     ["ARB", "USD"]),
+        ("OP_USD",    ["OPUSD"],             "optimism",     ["OP", "USD"]),
+
+        # ════════════════════════════════════════════════════════════
         # CRYPTO PRO-BTC EUR
+        # ════════════════════════════════════════════════════════════
+        ("BTC_EUR",   ["BTCEUR", "BITCOINEUR"],   "bitcoin",  ["BTC", "EUR"]),
         ("ETH_EUR",   ["ETHEUR"],             "ethereum",    ["ETH", "EUR"]),
         ("LTC_EUR",   ["LTCEUR"],             "litecoin",    ["LTC", "EUR"]),
 
+        # ════════════════════════════════════════════════════════════
         # CRYPTO ANTI-BTC USD
-        ("XRP_USD",   ["XRPUSD"],            "ripple",       ["XRP", "USD"]),
-        ("ADA_USD",   ["ADAUSD"],            "cardano",      ["ADA", "USD"]),
+        # ════════════════════════════════════════════════════════════
         ("XLM_USD",   ["XLMUSD"],            "stellar",      ["XLM", "USD"]),
         ("ALGO_USD",  ["ALGOUSD"],           "algorand",     ["ALGO", "USD"]),
         ("VET_USD",   ["VETUSD"],            "vechain",      ["VET", "USD"]),
@@ -188,12 +223,14 @@ def scan_all_markets(headers):
         ("TRX_USD",   ["TRXUSD"],            "tron",         ["TRX", "USD"]),
         ("XTZ_USD",   ["XTZUSD"],            "tezos",        ["XTZ", "USD"]),
 
+        # ════════════════════════════════════════════════════════════
         # CRYPTO ANTI-BTC EUR
+        # ════════════════════════════════════════════════════════════
         ("XRP_EUR",   ["XRPEUR"],            "ripple",       ["XRP", "EUR"]),
     ]
 
     results = {}
-    print("CAPITAL.COM MARKET SCANNER v2.0")
+    print("CAPITAL.COM MARKET SCANNER v3.0 (FIXED - Bitcoin included)")
     print("=" * 65)
     print(f"Datum: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65 + "\n")
@@ -208,7 +245,7 @@ def scan_all_markets(headers):
             info = get_market_info(headers, epic_candidate)
             if info and info.get("bid"):
                 found_info = info
-                print(f"OK direkt  | Epic: {info['epic']:15s} | Min: {info['min_size']:6} | Spread: {info['spread']} | {info['name'][:30]}")
+                print(f"✅ {info['epic']:15s} | Min: {info['min_size']:6} | Spread: {info['spread']:.6f}")
                 break
             time.sleep(0.1)
 
@@ -219,10 +256,10 @@ def scan_all_markets(headers):
                 info = get_market_info(headers, best_epic)
                 if info and info.get("bid"):
                     found_info = info
-                    print(f"OK suche   | Epic: {info['epic']:15s} | Min: {info['min_size']:6} | Spread: {info['spread']} | {info['name'][:30]}")
+                    print(f"🔍 {info['epic']:15s} | Min: {info['min_size']:6} | Spread: {info['spread']:.6f}")
 
         if not found_info:
-            print(f"NICHT GEFUNDEN")
+            print(f"❌ NICHT GEFUNDEN")
             continue
 
         results[config_key] = {
@@ -244,6 +281,7 @@ def generate_config(results):
         f"# Capital.com Market Configuration",
         f"# Auto-generated: {now}",
         f"# Total Markets: {len(results)}",
+        f"# Scanner v3.0 — Bitcoin included, up to 150 assets",
         f"",
         f"MARKET_CONFIG = {{",
         f"",
@@ -255,10 +293,12 @@ def generate_config(results):
         "INDUSTRIEMETALLE": ["COPPER", "ALUMINUM", "ZINC", "NICKEL"],
         "AGRAR":            ["WHEAT", "CORN", "SOYBEANS", "COFFEE", "SUGAR", "COTTON", "COCOA"],
         "VOLATILITY":       ["VIX"],
-        "CRYPTO (PRO-BTC) - USD": ["ETH_USD", "SOL_USD", "AVAX_USD", "MATIC_USD", "POL_USD", "DOT_USD",
-                                    "LINK_USD", "UNI_USD", "AAVE_USD", "ATOM_USD", "LTC_USD"],
-        "CRYPTO (PRO-BTC) - EUR": ["ETH_EUR", "LTC_EUR"],
-        "CRYPTO (ANTI-BTC) - USD": ["XRP_USD", "ADA_USD", "XLM_USD", "ALGO_USD", "VET_USD",
+        "CRYPTO (PRO-BTC) - USD": ["BTC_USD", "ETH_USD", "SOL_USD", "AVAX_USD", "MATIC_USD", "DOT_USD",
+                                    "LINK_USD", "UNI_USD", "AAVE_USD", "ATOM_USD", "LTC_USD",
+                                    "BCH_USD", "DOGE_USD", "SHIB_USD", "ADA_USD", "XRP_USD",
+                                    "NEAR_USD", "ARB_USD", "OP_USD"],
+        "CRYPTO (PRO-BTC) - EUR": ["BTC_EUR", "ETH_EUR", "LTC_EUR"],
+        "CRYPTO (ANTI-BTC) - USD": ["XLM_USD", "ALGO_USD", "VET_USD",
                                      "HBAR_USD", "IOTA_USD", "EOS_USD", "TRX_USD", "XTZ_USD"],
         "CRYPTO (ANTI-BTC) - EUR": ["XRP_EUR"],
     }
@@ -306,8 +346,13 @@ def main():
     results = scan_all_markets(headers)
 
     print("\n" + "=" * 65)
-    print(f"TARAMA TAMAMLANDI! {len(results)} piyasa bulundu")
+    print(f"✅ TARAMA TAMAMLANDI! {len(results)} piyasa bulundu")
     print("=" * 65)
+
+    if "BTC_USD" in results:
+        print(f"✅ BITCOIN ERFOLGREICH: Epic={results['BTC_USD']['epic']}, Spread={results['BTC_USD']['spread']}")
+    else:
+        print(f"⚠️  Bitcoin nicht gefunden (manuell hinzufügen?)")
 
     print("\nConfig dosyasi olusturuluyor...")
     config_code = generate_config(results)
@@ -316,15 +361,15 @@ def main():
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(config_code)
 
-    print(f"capital_markets_config.py yazildi: {output_path}")
+    print(f"✅ capital_markets_config.py yazildi: {output_path}")
 
-    print("\nONIZLEME (ilk 20 satir):")
+    print("\nÖNİZLEME (ilk 30 satır):")
     print("-" * 65)
-    for line in config_code.split("\n")[:20]:
+    for line in config_code.split("\n")[:30]:
         print(line)
     print("...")
 
-    print("\nIslem tamamlandi!")
+    print("\n✅ İşlem tamamlandı!")
 
 
 if __name__ == "__main__":

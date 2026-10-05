@@ -403,7 +403,7 @@ Die Merker-Dateien schreibt der Bot selbst; bearbeite sie nicht von Hand, solang
 
 ### Listen aus GitHub
 
-Drei Listen lädt der Bot bei Bedarf aus dem öffentlichen Repository `KhungFu/kisilerim`, nicht aus dem eigenen Ordner: `mentor_name.txt` (Handels-Doktrin; die ersten 3000 Zeichen gehen in den KI-Auftrag), `toplam_egitim.txt` und `Abfrage_Quellen.txt` (Nachrichtenseiten und X-Konten für die Nachrichtensammlung). Jede Installation benutzt damit dieselben Listen. Ist GitHub nicht erreichbar, arbeitet der Bot ohne sie weiter. Gepflegt werden die Listen im Repository `nexus`; ein GitHub-Workflow kopiert sie bei jedem Push nach `kisilerim`.
+Drei Listen lädt der Bot bei Bedarf aus dem öffentlichen Repository `KhungFu/kisilerim`, nicht aus dem eigenen Ordner: `mentor_name.txt` (Handels-Doktrin; die ersten 3000 Zeichen gehen in den KI-Auftrag), `toplam_egitim.txt` und `Abfrage_Quellen.txt` (Nachrichtenseiten und X-Konten für die Nachrichtensammlung). Jede Installation benutzt damit dieselben Listen. Ist GitHub nicht erreichbar, arbeitet der Bot ohne sie weiter. Gepflegt werden die Listen im Repository `nexus`; `kisilerim` holt sie von dort einmal pro Stunde.
 
 ## 13. Update und Rollback
 
@@ -469,6 +469,7 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 
 - **Gasoline zählt als Krypto.** Der Name GASOLINE enthält „SOL“. Der Bot halbiert deshalb die Positionsgröße, verlangt nur 3 von 5 Gremium-Stimmen und wendet die Krypto-Regeln an, auch am Wochenende.
 - **Halbierung nur für vier Coins.** Halbiert wird bei BTC, ETH, SOL und XRP. Andere Coins laufen mit voller Größe.
+- **Zwölf Coins gelten nicht als Krypto.** Der Bot erkennt Krypto an einer festen Namensliste. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX und XTZ aus der mitgelieferten Marktliste stehen nicht darauf. Für sie gelten die Regeln für Rohstoffe: 4 von 5 Gremium-Stimmen und kein Handel am Wochenende.
 - **Korrelation wird nicht geprüft.** Verwandte Märkte wie Crude, Heating Oil und Gasoline gelten als unabhängige Positionen.
 - **Ab 5 Positionen kein Drehen.** Bei 5 oder mehr offenen Positionen bricht der Bot vor jeder Prüfung ab, auch wenn ein Signal eine bestehende Position drehen würde.
 - **Statistik und Tagesziel aus der Bot-Datenbank sind unvollständig.** Die Datenbank kennt nur Schließungen, die der Bot selbst ausgelöst hat. Maßgeblich ist die Auswertung in der Capital-App.

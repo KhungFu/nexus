@@ -403,7 +403,7 @@ The bot writes the state files itself; do not edit them by hand while it is runn
 
 ### Lists from GitHub
 
-The bot loads three lists from the public repository `KhungFu/kisilerim` when it needs them, not from its own folder: `mentor_name.txt` (trading doctrine; the first 3000 characters go into the AI prompt), `toplam_egitim.txt` and `Abfrage_Quellen.txt` (news sites and X accounts for the news collection). Every installation therefore uses the same lists. If GitHub cannot be reached, the bot carries on without them. The lists are maintained in the `nexus` repository; a GitHub workflow copies them to `kisilerim` on every push.
+The bot loads three lists from the public repository `KhungFu/kisilerim` when it needs them, not from its own folder: `mentor_name.txt` (trading doctrine; the first 3000 characters go into the AI prompt), `toplam_egitim.txt` and `Abfrage_Quellen.txt` (news sites and X accounts for the news collection). Every installation therefore uses the same lists. If GitHub cannot be reached, the bot carries on without them. The lists are maintained in the `nexus` repository; `kisilerim` fetches them from there once an hour.
 
 ## 13. Update and rollback
 
@@ -469,6 +469,7 @@ The log stays in the original language (German and Turkish mixed); only the Tele
 
 - **Gasoline counts as crypto.** The name GASOLINE contains “SOL”. The bot therefore halves the position size, requires only 3 of 5 committee votes and applies the crypto rules, including at the weekend.
 - **Halving for four coins only.** The amount is halved for BTC, ETH, SOL and XRP. Other coins run at full size.
+- **Twelve coins do not count as crypto.** The bot recognizes crypto by a fixed list of names. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX and XTZ from the supplied market list are not on it. They follow the commodity rules: 4 of 5 committee votes and no trading at the weekend.
 - **Correlation is not checked.** Related markets such as Crude, Heating Oil and Gasoline count as independent positions.
 - **No reversing from 5 positions.** With 5 or more open positions the bot aborts before any check, even if a signal would reverse an existing position.
 - **Statistics and daily target from the bot database are incomplete.** The database only knows closes that the bot triggered itself. The evaluation in the Capital app is authoritative.

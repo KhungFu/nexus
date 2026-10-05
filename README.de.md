@@ -33,7 +33,8 @@ Die vollständige Anleitung mit allen Befehlen, Einstellungen und bekannten Gren
 | `docs/` | Handbuch in drei Sprachen |
 | `capital_markets_config.py` | Marktliste: Symbole, Epics, Mindestgrößen, Spreads. Ohne sie handelt der Bot eine eingebaute Liste mit neun Märkten |
 | `market_scanner.py` | Erzeugt `capital_markets_config.py` neu aus deinem eigenen Capital.com-Konto |
-| `mentor_name.txt`, `toplam_egitim.txt`, `Abfrage_Quellen.txt`, `NewsVerlage.txt`, `Audiobooks.txt`, `Bot_egitim_videolari.txt` | Doktrin und Quellenlisten. Ein Workflow kopiert sie in das öffentliche Repository `KhungFu/kisilerim`; die ersten drei liest der Bot im Betrieb von dort, nicht aus seinem Ordner |
+| `hesap_bul.py` | Prüft deine Capital.com-Anmeldung und listet deine Demo- und Live-Konten. Der Hinweis am Ende auf `CAPITAL_ACCOUNT_ID` und `IS_DEMO` stammt aus einer älteren Version; der Bot nutzt `CAPITAL_URL` |
+| `mentor_name.txt`, `toplam_egitim.txt`, `Abfrage_Quellen.txt`, `NewsVerlage.txt`, `Audiobooks.txt`, `Bot_egitim_videolari.txt` | Doktrin und Quellenlisten. Das öffentliche Repository `KhungFu/kisilerim` holt sie einmal pro Stunde von hier; die ersten drei liest der Bot im Betrieb von dort, nicht aus seinem Ordner |
 
 ## Deine Schlüssel bleiben privat
 
