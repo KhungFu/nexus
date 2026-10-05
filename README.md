@@ -1,101 +1,48 @@
-# 🏛️ Nexus Capital Corp - Autonomous Trading Bot
+# NEXUS CEO
 
+Telegram bot that trades CFDs on commodities and crypto through the Capital.com API: it scans the markets, opens positions, protects them with stop loss rules and sells in levels. Messages and commands are available in **English, German and Turkish**.
 
+Deutsch: [README.de.md](README.de.md) · Türkçe: [README.tr.md](README.tr.md)
 
----
+> **Risk warning.** This is a hobby project, not a financial product and not investment advice. CFD trading can lose all the money you put in. The code is tested against simulated broker responses, not against a live account. Run it on a **demo account** first and for at least a week. You use it at your own risk; there is no warranty.
 
-## 🇩🇪 Deutsch
+## Quick start
 
-Nexus Capital Corp ist eine hochautomatisierte Handelsstruktur, die nach dem Vorbild großer Investmentgesellschaften (wie Berkshire Hathaway oder Apple) arbeitet. Das System wird von einem zentralen **Nexus CEO** gesteuert, der verschiedene Fachabteilungen (Skripte) delegiert.
+1. Python 3.10 or newer on a machine that runs all the time (Linux, e.g. a Raspberry Pi).
+2. `pip install -r requirements.txt`
+3. `cp .env.example .env && chmod 600 .env`, then fill in the Telegram token, the Capital.com access data and at least one Gemini key.
+4. `python3 nexus_ceo.py`
+5. Write anything to your bot in Telegram. It answers with your chat ID. Put it into `.env` as `MY_CHAT_ID` and restart.
+6. On the next start the bot asks for the language. Tap one, confirm, done. The bot writes `BOT_LANGUAGE` into `.env` itself.
 
-### 🏢 Unternehmensstruktur
-* **CEO (`nexus_ceo.py`):** Strategische Leitung, Krisenmanagement (API-Limits) und Budgetkontrolle.
-* **Strategy (`gemini.py`):** KI-gestützte Marktanalyse (Gemini Pro/Flash) basierend auf der Handels-Doktrin.
-* **Operations (`capital.py`):** Direkte Ausführung an der Capital.com API (Orders & Positionsmanagement).
-* **Research (`nexus_scanner.py`):** Deep-Scan aller verfügbaren Märkte und Erstellung der Marktberichte.
-* **Communications (`telegram.py`):** Reporting und Alarmierung via Telegram.
+Full instructions, all commands, every setting and the known limits are in the manual:
 
-### 🚀 Installation
-1.  Klonen Sie das Repository.
-2.  Führen Sie den Installer aus: `chmod +x one_click_install.sh && ./one_click_install.sh`
-3.  Konfigurieren Sie die `.env` Datei mit Ihren API-Keys.
+- [Manual (English)](docs/MANUAL.en.md)
+- [Betriebsanleitung (Deutsch)](docs/MANUAL.de.md)
+- [Kullanım Kılavuzu (Türkçe)](docs/MANUAL.tr.md)
 
----
+## Files
 
-## 🇺🇸 English
+| File | Purpose |
+| --- | --- |
+| `nexus_ceo.py` | The bot |
+| `nexus_lang.py` | All Telegram texts in German, English and Turkish |
+| `.env.example` | Template for your settings. Copy it to `.env` |
+| `requirements.txt` | Python packages |
+| `systemd/nexus_ceo.service.example` | Template for running the bot as a service |
+| `docs/` | Manual in three languages |
+| `capital_markets_config.py` | Market list: symbols, epics, minimum sizes, spreads. Without it the bot trades a built-in list of nine markets |
+| `market_scanner.py` | Rebuilds `capital_markets_config.py` from your own Capital.com account |
+| `mentor_name.txt`, `toplam_egitim.txt`, `Abfrage_Quellen.txt`, `NewsVerlage.txt`, `Audiobooks.txt`, `Bot_egitim_videolari.txt` | Doctrine and source lists. A workflow copies them to the public repository `KhungFu/kisilerim`; the bot reads the first three from there at runtime, not from its folder |
 
-Nexus Capital Corp is a highly automated trading framework modeled after major investment firms. Managed by a central **Nexus CEO**, the system delegates tasks to specialized departments (scripts).
+## Your keys stay private
 
-### 🏢 Corporate Structure
-* **CEO (`nexus_ceo.py`):** Strategic leadership, crisis management (API limits), and budget oversight.
-* **Strategy (`gemini.py`):** AI-driven market analysis using Gemini Pro/Flash based on the "Doctrine."
-* **Operations (`capital.py`):** Execution layer via Capital.com API (Opening/Closing positions).
-* **Research (`nexus_scanner.py`):** Deep-scan of all available markets for opportunity discovery.
-* **Communications (`telegram.py`):** Investor relations and alerting via Telegram.
+`.env` contains passwords and API keys. `.gitignore` excludes it, so Git never uploads it. Do not rename it, do not paste its content anywhere, and check `git status` before your first push.
 
-### 🚀 Quick Start
-1.  Clone the repository.
-2.  Run the installer: `chmod +x one_click_install.sh && ./one_click_install.sh`
-3.  Configure your `.env` file with your credentials.
+## Language
 
----
+The bot asks for the language on the first start. Change it later with `/language`, `/sprache` or `/dil`. Every command has a name in each language, and all names always work.
 
-## 🇹🇷 Türkçe
+## License
 
-Nexus Capital Corp, büyük yatırım şirketlerinin (Apple veya Berkshire Hathaway gibi) yapısını örnek alan tam otonom bir ticaret sistemidir. Sistem, uzmanlaşmış departmanları (scriptleri) yöneten merkezi bir **Nexus CEO** tarafından idare edilir.
-
-### 🏢 Kurumsal Yapı
-* **CEO (`nexus_ceo.py`):** Stratejik liderlik, kriz yönetimi (API limitleri) ve bütçe kontrolü.
-* **Strateji (`gemini.py`):** Ticaret doktrinine dayalı, Gemini AI destekli piyasa analizi.
-* **Operasyon (`capital.py`):** Capital.com API üzerinden emirlerin iletilmesi ve pozisyon yönetimi.
-* **Araştırma (`nexus_scanner.py`):** Tüm piyasaların derinlemesine taranması ve raporlanması.
-* **İletişim (`telegram.py`):** Telegram üzerinden raporlama ve acil durum bildirimleri.
-
-### 🚀 Hızlı Kurulum
-1.  Depoyu (repository) klonlayın.
-2.  Yükleyiciyi çalıştırın: `chmod +x one_click_install.sh && ./one_click_install.sh`
-3.  `.env` dosyasını API anahtarlarınızla düzenleyin.
-
----
-
-## ⚖️ Rules & Logic (All Languages)
-* **Survival Mode:** If balance < 100€, only Commodities (Gold, Oil, etc.) are traded. / Wenn < 100€, nur Rohstoffe. / 100€ altı bütçede sadece emtialar işlem görür.
-* **API Guard:** Automatic 60-minute pause on Rate Limits. / 60 Min. Pause bei API Limit. / API limiti durumunda 60 dakika otomatik bekleme.
-* **Weekend:** Crypto trading only if balance > 100€. / Wochenende: Crypto nur > 100€. / Hafta sonu: Sadece 100€ üstü bütçeyle Kripto ticareti.
-
----
-
-📱 Installation auf Termux (Android)
-Nexus Capital Corp kann auch mobil auf deinem Smartphone laufen:
-
-Termux öffnen und System updaten:
-
-```shell
-pkg update && pkg upgrade
-```
-
-Python & Git installieren:
-
-```shell
-pkg install python git
-```
-
-Repository klonen (oder Dateien manuell kopieren):
-
-```shell
-wget https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh && chmod +x one_click_install.sh && ./one_click_install.sh
-```
-
-⚙️ Konfiguration
-Trage deine API-Keys in der erstellten .env Datei ein:
-
-CAPITAL_API_KEY: Dein Key von Capital.com
-
-TELEGRAM_TOKEN: Dein Bot-Token vom BotFather
-
-GEMINI_API_KEY_1: Dein Google AI Studio Key
-
----
-```shell
-curl -s https://raw.githubusercontent.com/KhungFu/nexus/main/one_click_install.sh | bash
-```
+MIT, see [LICENSE](LICENSE).

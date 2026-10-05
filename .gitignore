@@ -1,18 +1,38 @@
-# Python
-__pycache__/
-venv/
-*.py[cod]
-
-# Private Daten (NIEMALS HOCHLADEN)
+# --- secrets: never commit ---
 .env
+.env.*
+!.env.example
+*.env
+!.env.example
+
+# --- runtime state written by the bot ---
+*.log
+*.log.*
+*.db
+*.db-journal
+*.sqlite*
+trailing_sl_state.json
+positions_seen.json
+pyramiding_state.json
+daily_loss_counter.json
+depot_dd_tracker.json
+daily_tp_state.json
+*_state.json
+*_tracker.json
+*_counter.json
+nexus_lang_missing.log
 market_data.json
 error_log.json
 
-# Lokale Dokumente
-toplam_egitim.txt
-Audiobooks.txt
-Bot_egitim_videolari.txt
-Abfrage_Quellen.txt
-mentor_name.txt
-NewsVerlage.txt
-*.log
+# --- backups and temp files ---
+*.bak
+*.bak_*
+*.tmp
+*.orig
+*.rej
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/

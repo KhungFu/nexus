@@ -1,0 +1,22 @@
+# Example systemd unit for NEXUS CEO.
+# 1. Replace YOUR_USER and the paths below.
+# 2. sudo cp systemd/nexus_ceo.service.example /etc/systemd/system/nexus_ceo.service
+# 3. sudo systemctl daemon-reload && sudo systemctl enable --now nexus_ceo.service
+# The bot reads .env from the folder of nexus_ceo.py.
+
+[Unit]
+Description=NEXUS CEO trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/nexus
+ExecStart=/usr/bin/python3 /home/YOUR_USER/nexus/nexus_ceo.py
+Restart=on-failure
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
