@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NEXUS - Diagnose fuer v15.16 bis v15.21   (NUR LESEND)
+NEXUS - Diagnose fuer v15.16 bis v15.22   (NUR LESEND)
 
 Das Skript aendert nichts: Es liest nexus_ceo.py, die .env, die Logdateien und holt
 von Capital.com nur Daten ab (GET). Es eroeffnet, aendert und schliesst keine Position.
@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "5 (fuer NEXUS v15.21)"
+VERSION = "6 (fuer NEXUS v15.22)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -49,7 +49,8 @@ ZEIGEN = [
     "MIRROR_TP_ENABLED", "MIRROR_TP_LEVEL_1_MULT", "MIRROR_TP_LEVEL_2_MULT", "MIRROR_TP_LEVEL_3_MULT",
     "MIRROR_TP_CLOSE_PCT", "MAX_VERLUSTE_PRO_TAG", "WIEDEREINSTIEG_SPERRE_STD", "SCAN_MELDUNGEN",
     "PROVIDER_ORDER", "OLLAMA_PRIORITY", "OLLAMA_MODEL", "GEMINI_MODEL_1", "GEMINI_CHAIN_MAX",
-    "GEMINI_503_PAUSE", "GEMINI_USE_INTERACTIONS_API", "MODEL_AUTOUPDATE", "GROQ_MODEL", "CAPITAL_URL",
+    "GEMINI_503_PAUSE", "GEMINI_USE_INTERACTIONS_API", "MODEL_AUTOUPDATE", "MODEL_AUTOUPDATE_HOURS",
+    "MODEL_AUTOUPDATE_PIN", "AI_CHAIN_MAX", "GROQ_MODEL", "QWEN_MODEL", "NVIDIA_MODEL", "CAPITAL_URL",
 ]
 SCHLUESSEL_LISTEN = ["GEMINI_KEYS", "GROQ_KEYS", "QWEN_KEYS", "NVIDIA_KEYS"]
 PFLICHT = ["TG_TOKEN", "MY_CHAT_ID", "CAPITAL_API_KEY", "CAPITAL_IDENTIFIER", "CAPITAL_PASSWORD"]
@@ -84,6 +85,9 @@ EREIGNISSE = [
     ("KI: Ersatz Qwen", "[OK] Qwen"),
     ("KI: Ersatz Nvidia", "[OK] Nvidia"),
     ("KI: Ersatz Ollama (lokal)", "[OK] Ollama"),
+    ("KI: Ersatzmodell der Kette sprang ein", re.compile(r"Hauptmodell \S+ ausgefallen -> ")),
+    ("KI: Modell automatisch ersetzt", "Modell ersetzt: "),
+    ("KI: kein Ersatzmodell bestand die Pruefung", "kein Ersatz hat die Prüfung bestanden"),
     ("Ersatzbetrieb im Scan", "fallback analiz"),
     ("KI: Gemini-Kette ohne Antwort", "kombinasyonları quota dolu"),
     ("KI: alle Ersatz-Anbieter ausgefallen", "Tüm AI provider başarısız"),
@@ -193,7 +197,7 @@ def teil0(bot_dir, env, doppelt):
             stand = "v15.10 bis v15.15"
         else:
             stand = "aelter als v15.10"
-        merkmale = [("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
+        merkmale = [("Modell-Schleife Ersatz-KI (v15.22)", "def ai_chain_call("), ("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
                     ("Stop aus der Tagesspanne (v15.17)", "def sl_min_distance("), ("Schliess-Melder (v15.16)", "def closed_position_watch(")]
         K["stand"] = stand
         print("  Code-Stand: %s   (%d Zeilen, geaendert %s)" % (
@@ -366,7 +370,8 @@ def teil1(bot_dir, days):
 
     for name in ("Order gesendet, Position NICHT gefunden", "Order abgelehnt", "Gegensignal (EXIT)",
                  "Sperre: Wiedereinstieg", "Sperre: maximale Positionen", "Trailing-Stop wirklich nachgezogen",
-                 "Warnung im Stop-Lauf (Trailing SL epic)", "Schwarzer Schwan"):
+                 "Warnung im Stop-Lauf (Trailing SL epic)", "Schwarzer Schwan",
+                 "KI: Modell automatisch ersetzt", "KI: kein Ersatzmodell bestand die Pruefung"):
         if letzte.get(name):
             print("\n  --- letzte Zeilen: %s ---" % name)
             for ts, l in letzte[name]:
@@ -822,7 +827,7 @@ TEXTE = {
            "heute": "Letzte 24 h im Log", "orders": "Orders", "nicht_best": "nicht bestätigt", "abgelehnt": "abgelehnt", "sl_gesch": "Stop geschoben",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "Gegensignale", "sperren": "Sperren ({0} Tage)", "s_wieder": "Wiedereinstieg",
            "s_max": "Max. Positionen", "s_verlust": "Verluste", "s_spread": "Spread", "s_dd": "Tages-Stopp",
-           "dreh2": "Gegensignale: {0} · Position geschlossen: {1} · Gegenposition entstanden: {2}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
+           "dreh2": "Gegensignale: {0} · Position geschlossen: {1} · Gegenposition entstanden: {2}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3} · Modell ersetzt {4}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
            "kein_log": "Kein Log im Zeitraum.", "kein_api": "Capital.com: keine Daten.", "api_fehler": "Capital.com: {0} Abfragen fehlgeschlagen.",
            "keine": "keine"},
     "en": {"kopf": "🔎 NEXUS diagnosis · {0} days", "stand": "Version: {0}", "dienst": "Service: {0}, restarts: {1}", "sprache": "Language: {0}",
@@ -835,7 +840,7 @@ TEXTE = {
            "heute": "Last 24 h in the log", "orders": "orders", "nicht_best": "not verified", "abgelehnt": "rejected", "sl_gesch": "stop moved",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "opposite signals", "sperren": "Blocks ({0} days)", "s_wieder": "re-entry",
            "s_max": "max positions", "s_verlust": "losses", "s_spread": "spread", "s_dd": "daily stop",
-           "dreh2": "Opposite signals: {0} · position closed: {1} · opposite position created: {2}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
+           "dreh2": "Opposite signals: {0} · position closed: {1} · opposite position created: {2}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3} · model replaced {4}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
            "kein_log": "No log in this period.", "kein_api": "Capital.com: no data.", "api_fehler": "Capital.com: {0} requests failed.",
            "keine": "none"},
     "tr": {"kopf": "🔎 NEXUS teşhisi · {0} gün", "stand": "Sürüm: {0}", "dienst": "Servis: {0}, yeniden başlatma: {1}", "sprache": "Dil: {0}",
@@ -848,7 +853,7 @@ TEXTE = {
            "heute": "Son 24 saat log'da", "orders": "emir", "nicht_best": "doğrulanamadı", "abgelehnt": "reddedildi", "sl_gesch": "stop kaydırıldı",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "karşı sinyal", "sperren": "Engeller ({0} gün)", "s_wieder": "yeniden giriş",
            "s_max": "maks. pozisyon", "s_verlust": "kayıp", "s_spread": "spread", "s_dd": "günlük durdurma",
-           "dreh2": "Karşı sinyal: {0} · pozisyon kapatıldı: {1} · karşı pozisyon oluştu: {2}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
+           "dreh2": "Karşı sinyal: {0} · pozisyon kapatıldı: {1} · karşı pozisyon oluştu: {2}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3} · model değiştirildi {4}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
            "kein_log": "Bu dönemde log yok.", "kein_api": "Capital.com: veri yok.", "api_fehler": "Capital.com: {0} sorgu başarısız.",
            "keine": "yok"},
 }
@@ -906,7 +911,7 @@ def kurzfassung(lang, days, mit_api):
             T["s_verlust"], a.get("Sperre: Verluste des Tages", 0), T["s_spread"], a.get("Sperre: Spread", 0),
             T["s_dd"], a.get("Sperre: Tages-Verlust-Stopp", 0)))
         z.append(T["ki"].format(days, a.get("KI: Gemini hat geantwortet", 0), a.get("Ersatzbetrieb im Scan", 0),
-                                a.get("KI: alle Ersatz-Anbieter ausgefallen", 0)))
+                                a.get("KI: alle Ersatz-Anbieter ausgefallen", 0), a.get("KI: Modell automatisch ersetzt", 0)))
         z.append(T["fehler"].format(K.get("fehler", 0), K.get("miss", 0)))
     else:
         z.append(T["kein_log"])

@@ -3,6 +3,14 @@
 # |  NEXUS NATURE v15.8 - BRIDGEWATER EDITION                          |
 # |  Datei: nexus_ceo.py                                                |
 # |  Erstellt: 2026-07-14  |  Zuletzt geaendert: 2026-09-21            |
+# |  Aenderungen v15.22 (2026-10-06):                                   |
+# |    - Groq / Qwen (OpenRouter) / Nvidia: Modell-Schleife wie in     |
+# |      swarm.py - Modellliste, Kette aus Haupt- und Ersatzmodellen,  |
+# |      totes Modell 24 h gesperrt, Ersatz per Mini-Aufruf geprueft   |
+# |      und in die .env geschrieben (Sicherung + Kontrolle)           |
+# |    - alle Keys aus QWEN_KEYS / NVIDIA_KEYS werden benutzt          |
+# |    - /update_models zeigt und prueft auch Groq, Qwen, Nvidia;      |
+# |      /update_models best = auf das beste Modell wechseln           |
 # |  Aenderungen v15.21 (2026-10-06):                                   |
 # |    - Gegensignal = nur schliessen: keine sofortige Gegen-Order     |
 # |      mehr (sie lief ohne Pruefungen und ohne Bestaetigung); die    |
@@ -816,7 +824,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.21"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v15.22"                                       # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -2096,6 +2104,641 @@ def _gemini_modelupdate_loop():
 
 
 # ============================================================
+# v15.22: MODELL-SCHLEIFE FUER GROQ / QWEN (OpenRouter) / NVIDIA - wie in swarm.py
+#
+# Bis v15.21 lief jeder dieser Anbieter mit dem EINEN Modell aus der .env. Nimmt der
+# Anbieter das Modell aus dem Programm, scheiterte er bei jedem Scan (Log vom 30.09.-06.10.:
+# Groq 426x "model does not exist", Qwen "No endpoints found", Nvidia "410 Gone").
+#
+# Uebernommen aus swarm.py (MODEL-AUTOUPDATE, _model_chain, _chat_completions_chain):
+#   - Modellliste des Anbieters abrufen, Nicht-Chat-Modelle aussortieren, Rangfolge
+#     (stabil vor Preview -> Groesse, gedeckelt -> Kontext -> Alter)
+#   - pro Anfrage eine Kette: Hauptmodell + Ersatzmodelle (hoechstens AI_CHAIN_MAX)
+#       401/403/429 -> naechster Key (alle Keys durch -> naechstes Modell)
+#       404/410 / "does not exist" / "decommissioned" / "No endpoints found"
+#                   -> Modell 24 h gesperrt, naechstes Modell, Pruefung ausser der Reihe
+#       400/5xx / leere Antwort -> naechstes Modell
+#   - faellt das Hauptmodell weg: Ersatz suchen, jeden Kandidaten mit einem echten
+#     Mini-Aufruf pruefen, das neue Modell in die .env schreiben (Sicherung
+#     .env.modelupdate.bak, Kontrolle, bei Fehler zurueck) und sofort benutzen
+#   - Pruef-Thread: 75 s nach dem Start, dann alle MODEL_AUTOUPDATE_HOURS, ausser der
+#     Reihe nach einem Ausfall (entprellt, 5 Min)
+#
+# Anders als swarm.py:
+#   - Sperren gelten je Anbieter (dieselbe Modell-ID gibt es bei Groq UND Nvidia).
+#   - <think>...</think> wird aus jeder Antwort entfernt (Ersatzmodelle der Kette sind
+#     nicht einzeln geprueft; "Denk"-Text darf nicht als Handelssignal gelesen werden).
+#   - Ein gesperrtes Hauptmodell wird in der Kette uebersprungen, solange Ersatz da ist.
+#   - Ein Modell, das nicht in der Liste steht oder im Betrieb gesperrt wurde, wird erst
+#     gefragt und nur ersetzt, wenn es wirklich nicht antwortet; bleibt die Pruefung ohne
+#     Ergebnis (Limit, Netz), wird nichts geaendert.
+#   - Qwen/OpenRouter: zuerst Gratis-Qwen-Modelle; besteht keines die Pruefung, ein
+#     anderes Gratis-Modell (Nexus hat keinen eigenen OpenRouter-Platz wie swarm.py).
+#   - /update_models prueft und repariert nur. Auf das beste Modell wechselt erst
+#     /update_models best - ein von Hand gewaehltes Modell bleibt sonst stehen.
+#
+# .env:  MODEL_AUTOUPDATE=true  MODEL_AUTOUPDATE_HOURS=6  MODEL_AUTOUPDATE_NOTIFY=true
+#        MODEL_AUTOUPDATE_PIN=GROQ_MODEL,QWEN_MODEL,NVIDIA_MODEL   (diese nie anfassen)
+#        AI_CHAIN_MAX=4
+# ============================================================
+def _ai_key_liste(*namen):
+    keys = []
+    for n in namen:
+        for k in os.getenv(n, "").split("#")[0].split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+    return keys
+
+
+_AI_PROVIDER = ("groq", "qwen", "nvidia")
+_AI_LABEL    = {"groq": "Groq", "qwen": "Qwen", "nvidia": "Nvidia"}
+_AI_GLOBAL   = {"groq": "GROQ_MODEL", "qwen": "QWEN_MODEL", "nvidia": "NVIDIA_MODEL"}
+_AI_ENV_KEY  = {"groq": "GROQ_MODEL", "qwen": "QWEN_MODEL",
+                "nvidia": "NVIDIA_MODELS" if os.getenv("NVIDIA_MODELS", "").strip() else "NVIDIA_MODEL"}
+_AI_KEYS     = {"groq": GROQ_KEYS,
+                "qwen": _ai_key_liste("QWEN_API_KEY", "QWEN_KEYS"),
+                "nvidia": _ai_key_liste("NVIDIA_API_KEY", "NVIDIA_KEYS")}
+GROQ_BASE_URL   = (os.getenv("GROQ_BASE_URL") or "https://api.groq.com").split("#")[0].strip().rstrip("/")
+NVIDIA_BASE_URL = (os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1").split("#")[0].strip().rstrip("/")
+
+_AI_HEAL_EVENT  = threading.Event()
+_AI_RUN_LOCK    = threading.Lock()         # nur ein Prueflauf gleichzeitig
+_ai_state_lock  = threading.Lock()
+_AI_REJECTED    = {}                       # (anbieter, modell) -> Zeitpunkt der Sperre
+_AI_REJECT_TTL  = 24 * 3600
+_AI_BACKUPS     = {p: [] for p in _AI_PROVIDER}    # Ersatzmodelle aus dem Katalog, beste zuerst
+_AI_KEY_IDX     = {p: 0 for p in _AI_PROVIDER}
+_AI_HINT        = {}                       # anbieter -> Hinweis (z.B. Konto-Einstellung bei OpenRouter)
+_AI_LAST        = {"zeit": 0.0, "changes": [], "info": [], "errors": []}
+_AI_CHAIN_MAX   = max(1, _gemini_env_int("AI_CHAIN_MAX", 4))
+_AI_PROBE_MAX   = 3                        # Mini-Aufrufe je Anbieter und Lauf
+_AI_PROBE_TIMEOUT = 40
+_AI_SIZE_CAP_B  = 120                      # ueber 120B kaum besser, aber langsamer / oefter 429
+_AI_BACKUP_KEEP = 8
+_AI_NON_CHAT_RE = re.compile(
+    r"whisper|guard|tts|embed|moderat|compound|orpheus|playai|transcri|rerank|image-gen",
+    re.IGNORECASE)
+# Der Nvidia-Katalog enthaelt viel Nicht-Chat (Bild, Embedding, Bio, Sprache, Safety ...)
+_AI_NVIDIA_NON_CHAT_RE = re.compile(
+    r"(?:^|[-/_.])(?:vl|vlm|vision|clip|asr|riva|reward|neva|kosmos|paligemma|fuyu|sdxl|flux|"
+    r"cosmos|genmol|molmim|diffdock|esm\d*|protein|bionemo|retriev\w*|ocr|parse|nemoguard|"
+    r"safety|topic|jailbreak|translate)(?:$|[-/_.])|"
+    r"stable-diffusion|embed|rerank|deplot|parakeet|canary|fastpitch|magpie|maxine|studiovoice",
+    re.IGNORECASE)
+_AI_DEAD_TXT = ("model_not_found", "decommissioned", "does not exist", "no longer supported",
+                "no endpoints found", "not a valid model id",
+                "'title': 'gone'", '"title": "gone"', '"title":"gone"')
+
+
+def ai_primary(prov):
+    return (globals().get(_AI_GLOBAL[prov]) or "").strip()
+
+
+def _ai_base(prov):
+    if prov == "groq":
+        return GROQ_BASE_URL + "/openai/v1"
+    if prov == "qwen":
+        return QWEN_BASE_URL.rstrip("/")
+    return NVIDIA_BASE_URL
+
+
+def _ai_gesperrt(prov, model, now=None):
+    now = time.time() if now is None else now
+    return now - _AI_REJECTED.get((prov, model), 0) < _AI_REJECT_TTL
+
+
+def ai_model_chain(prov, now=None):
+    """Kette fuer EINE Anfrage: Hauptmodell, dann Ersatzmodelle - ohne die in den letzten
+    24 h als tot erkannten. Ist das Hauptmodell gesperrt und kein Ersatz bekannt, wird es
+    trotzdem versucht (vielleicht ist es wieder da)."""
+    now = time.time() if now is None else now
+    primary = ai_primary(prov)
+    with _ai_state_lock:
+        rest = [m for m in _AI_BACKUPS.get(prov, []) if m and m != primary and not _ai_gesperrt(prov, m, now)]
+        primary_ok = bool(primary) and not _ai_gesperrt(prov, primary, now)
+    if primary_ok:
+        return [primary] + rest[:_AI_CHAIN_MAX - 1]
+    if rest:
+        return rest[:_AI_CHAIN_MAX]
+    return [primary] if primary else []
+
+
+def ai_model_dead(prov, model):
+    """Im Betrieb als tot erkannt: 24 h nicht mehr nehmen. War es das Hauptmodell,
+    die Pruefung ausser der Reihe anstossen (einmal je Sperre)."""
+    with _ai_state_lock:
+        neu = not _ai_gesperrt(prov, model)
+        _AI_REJECTED[(prov, model)] = time.time()
+    # nur beim ERSTEN Erkennen anstossen: bleibt das Modell tot und gibt es keinen Ersatz
+    # (festgehalten, keine Liste), wuerde sonst jede Anfrage einen neuen Prueflauf ausloesen
+    if neu and model == ai_primary(prov):
+        _AI_HEAL_EVENT.set()
+
+
+def _ai_classify(e):
+    """Fehler eines Aufrufs einordnen:
+    'tot'     Modell gibt es nicht mehr            -> 24 h sperren, naechstes Modell
+    'key'     401 / 402 / 403 / 429                -> naechster Key, dann naechstes Modell
+    'modell'  400 / 408 / 413 / 422 / 5xx / Antwort ohne Inhalt -> naechstes Modell
+    'konto'   OpenRouter: Konto-Einstellung sperrt Gratis-Modelle -> Anbieter aufgeben
+    'abbruch' Netz / unbekannt                     -> Anbieter fuer diese Anfrage aufgeben"""
+    code = getattr(e, "status_code", None)
+    err = str(e)
+    low = err.lower()
+    if isinstance(e, (IndexError, TypeError, AttributeError, KeyError)):
+        return "modell"                    # Antwort ohne Inhalt / in unerwarteter Form
+    if "data policy" in low:
+        return "konto"
+    if code in (404, 410) or any(x in low for x in _AI_DEAD_TXT):
+        return "tot"
+    if code in (401, 402, 403, 429):
+        return "key"
+    if code is None:
+        m = re.search(r"Error code:\s*(\d{3})", err)
+        if m:
+            code = int(m.group(1))
+            if code in (401, 402, 403, 429):
+                return "key"
+    if code in (400, 408, 413, 422) or (isinstance(code, int) and code >= 500) or "overloaded" in low:
+        return "modell"
+    return "abbruch"
+
+
+def _ai_clean(text):
+    """Antwort saeubern: <think>...</think> gehoert nicht in die Analyse - dort koennten
+    Probe-Zeilen wie "TRADE: ..." stehen, die der Bot sonst als Signal lesen wuerde.
+    Ein nicht geschlossenes <think> heisst: Antwort abgeschnitten -> wie eine leere Antwort.
+    Steht nur ein </think> da (oeffnendes Zeichen fehlt), zaehlt der Text dahinter."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S | re.I)
+    if "<think>" in text.lower():
+        return ""
+    ende = text.lower().rfind("</think>")          # oeffnendes <think> fehlt: nur der Text danach zaehlt
+    if ende >= 0:
+        text = text[ende + len("</think>"):]
+    return text.strip()
+
+
+def ai_chain_call(prov, call_once):
+    """Anfrage an Groq / Qwen / Nvidia ueber die Modell-Kette. call_once(key, modell) gibt
+    den Antworttext zurueck oder wirft. Rueckgabe: Text oder None."""
+    label = _AI_LABEL[prov]
+    keys = [k for k in _AI_KEYS.get(prov, []) if k]
+    if not keys:
+        return None
+    primary = ai_primary(prov)
+    chain = ai_model_chain(prov)
+    if not chain:
+        logging.warning(f"{label} hata: kein Modell gesetzt")
+        return None
+    for model in chain:
+        for _ in range(len(keys)):
+            idx = _AI_KEY_IDX[prov] % len(keys)
+            try:
+                text = _ai_clean(call_once(keys[idx], model))
+            except Exception as e:
+                art = _ai_classify(e)
+                logging.warning(f"{label} key {idx + 1} hata: {model}: {str(e)[:300]}")
+                if art == "tot":
+                    ai_model_dead(prov, model)
+                    break
+                if art == "key":
+                    _AI_KEY_IDX[prov] = (idx + 1) % len(keys)
+                    time.sleep(1)
+                    continue
+                if art == "modell":
+                    break
+                if art == "konto":
+                    logging.warning(f"{label}: OpenRouter lehnt Gratis-Modelle wegen der Konto-Einstellung ab "
+                                    f"(data policy) - bitte auf openrouter.ai unter Settings > Privacy freigeben")
+                return None
+            if text:
+                if model != primary:
+                    logging.warning(f"[{label.upper()}] Hauptmodell {primary or '-'} ausgefallen -> {model} antwortet")
+                logging.info(f"[OK] {label} ({model}, key {idx + 1})")
+                return text
+            logging.warning(f"{label} key {idx + 1} hata: {model}: leere Antwort")
+            break
+    return None
+
+
+# ---- Katalog + Rangfolge (aus swarm.py) ---------------------------------
+def _ai_model_size_b(model_id):
+    """Groesste erkennbare Parameterzahl aus der ID (...-70b-...). 0 = unbekannt."""
+    sizes = re.findall(r'(?<![\d.])(\d{1,4}(?:\.\d+)?)b(?![a-z])', (model_id or "").lower())
+    return max((float(x) for x in sizes), default=0.0)
+
+
+def _ai_price_zero(v):
+    try:
+        return float(v) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _ai_or_is_free(m):
+    p = m.get("pricing") or {}
+    return _ai_price_zero(p.get("prompt")) and _ai_price_zero(p.get("completion"))
+
+
+def _ai_or_is_text_chat(m):
+    """Text rein -> Text raus. Fehlt 'architecture', wird nicht ausgeschlossen."""
+    mid = m.get("id", "")
+    if not mid or _AI_NON_CHAT_RE.search(mid):
+        return False
+    arch = m.get("architecture") or {}
+    outs, ins = arch.get("output_modalities"), arch.get("input_modalities")
+    if outs is not None and set(outs) != {"text"}:
+        return False
+    if ins is not None and "text" not in ins:
+        return False
+    if outs is None and isinstance(arch.get("modality"), str) and not arch["modality"].endswith("->text"):
+        return False
+    return True
+
+
+def _ai_or_expires_soon(m, days=7):
+    exp = m.get("expiration_date")
+    if not exp:
+        return False
+    try:
+        from datetime import timezone as _tz
+        dt = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return (dt - datetime.now(_tz.utc)).total_seconds() < days * 86400
+    except Exception:
+        return False
+
+
+def _ai_model_rank(m, cap=None):
+    """Groesser = besser: stabil vor Preview, dann Groesse (gedeckelt), Kontext, Alter."""
+    mid = m.get("id", "")
+    ctx = m.get("context_length") or m.get("context_window") or 0
+    try:
+        ctx, created = int(ctx), int(m.get("created") or 0)
+    except (TypeError, ValueError):
+        ctx, created = 0, 0
+    return (0 if "preview" in mid.lower() else 1,
+            min(_ai_model_size_b(mid), cap or _AI_SIZE_CAP_B), ctx, created)
+
+
+def _ai_catalog(prov):
+    """Modellliste des Anbieters. OpenRouter ist oeffentlich, Groq/Nvidia brauchen einen Key."""
+    url = _ai_base(prov) + "/models"
+    if prov == "qwen":
+        r = requests.get(url, timeout=25)
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        if len(data) < 20:
+            raise RuntimeError(f"Liste unplausibel ({len(data)} Einträge)")
+        return data
+    keys = [k for k in _AI_KEYS.get(prov, []) if k]
+    last = "kein Key"
+    for i in range(len(keys)):
+        key = keys[(_AI_KEY_IDX[prov] + i) % len(keys)]
+        r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=20)
+        if r.status_code in (401, 403):
+            last = f"HTTP {r.status_code}"
+            continue
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        if len(data) < (3 if prov == "groq" else 5):
+            raise RuntimeError(f"Liste unplausibel ({len(data)} Einträge)")
+        return data
+    raise RuntimeError(f"Key abgelehnt ({last})")
+
+
+def _ai_probe(prov, model_id):
+    """Echter Mini-Aufruf. Rueckgabe: 'ok' | 'dead' | 'inconclusive' (429 / 5xx / Key / Netz).
+    Bei 401/403/429 wird einmal der naechste Key versucht."""
+    keys = [k for k in _AI_KEYS.get(prov, []) if k]
+    if not keys:
+        return "inconclusive"
+    url = _ai_base(prov) + "/chat/completions"
+    for versuch in range(min(2, len(keys))):
+        key = keys[(_AI_KEY_IDX[prov] + versuch) % len(keys)]
+        try:
+            r = requests.post(url, headers={"Authorization": f"Bearer {key}"},
+                              json={"model": model_id, "max_tokens": 512,
+                                    "messages": [{"role": "user", "content": "Antworte nur mit: OK"}]},
+                              timeout=_AI_PROBE_TIMEOUT)
+        except Exception as e:
+            logging.debug(f"[MODELUPDATE] Probe {prov}/{model_id}: {e}")
+            return "inconclusive"
+        if r.status_code == 200:
+            try:
+                wahl = (r.json().get("choices") or [None])[0]
+            except Exception:
+                return "inconclusive"
+            if not wahl:
+                return "inconclusive"          # 200 ohne Antwort (OpenRouter meldet so auch Limits)
+            roh = (wahl.get("message") or {}).get("content") or ""
+            if _ai_clean(roh):
+                return "ok"
+            # nur "Denken" oder am Laengenlimit abgeschnitten: das Modell lebt, das Urteil bleibt offen
+            if "<think>" in roh.lower() or wahl.get("finish_reason") == "length":
+                return "inconclusive"
+            return "dead"
+        if "data policy" in (r.text or "").lower():
+            _AI_HINT[prov] = ("OpenRouter lehnt Gratis-Modelle wegen der Konto-Einstellung ab (data policy) - "
+                              "bitte auf openrouter.ai unter Settings > Privacy freigeben")
+            return "inconclusive"
+        if r.status_code in (401, 403, 429):
+            continue
+        if r.status_code in (402, 408) or r.status_code >= 500:
+            return "inconclusive"
+        return "dead"
+    return "inconclusive"
+
+
+def _ai_pick_verified(prov, candidates, current, limit=None):
+    """Erster Kandidat, der den Mini-Aufruf besteht. Rueckgabe: (modell | None, anzahl_tests)."""
+    tested, now = 0, time.time()
+    for mid in candidates:
+        if mid == current or _ai_gesperrt(prov, mid, now):
+            continue
+        if tested >= (limit or _AI_PROBE_MAX) or prov in _AI_HINT:
+            break
+        tested += 1
+        res = _ai_probe(prov, mid)
+        logging.info(f"[MODELUPDATE] Probe {prov}/{mid}: {res}")
+        if res == "ok":
+            return mid, tested
+        if res == "dead":
+            with _ai_state_lock:
+                _AI_REJECTED[(prov, mid)] = now
+    return None, tested
+
+
+def _ai_env_set_verified(updates):
+    """KEY=WERT in der .env setzen: Kommentare, Reihenfolge und Zeilenenden bleiben, fehlende
+    Eintraege kommen ans Ende. Sicherung .env.modelupdate.bak, danach Kontrolle; stimmt etwas
+    nicht, kommt der alte Inhalt zurueck. Rueckgabe: (ok, meldung)"""
+    if not updates:
+        return True, "nichts zu tun"
+    path = os.path.join(BASE_DIR, ".env")
+    original = None
+
+    def _schreiben(text):
+        tmp = path + ".modelupdate.tmp"
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        try:
+            os.chmod(tmp, os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o600)
+        except Exception:
+            pass
+        os.replace(tmp, path)
+
+    with _ENV_WRITE_LOCK:
+        try:
+            if not os.path.exists(path):
+                return False, ".env nicht gefunden"
+            with open(path, encoding="utf-8", newline="") as f:
+                original = f.read()
+            text = original
+            nl = "\r\n" if "\r\n" in original else "\n"
+            for key, val in updates.items():
+                pat = re.compile(rf'^([ \t]*{re.escape(key)}[ \t]*=[ \t]*)([^#\r\n]*?)([ \t]+#[^\r\n]*)?(\r?)$', re.M)
+                if pat.search(text):
+                    text = pat.sub(lambda mo, v=val: f"{mo.group(1)}{v}{mo.group(3) or ''}{mo.group(4)}", text)
+                else:
+                    text = text.rstrip("\r\n") + f"{nl}{key}={val}{nl}"
+            bak = path + ".modelupdate.bak"
+            with open(bak, "w", encoding="utf-8", newline="") as f:
+                f.write(original)
+            try:
+                os.chmod(bak, 0o600)
+            except Exception:
+                pass
+            _schreiben(text)
+            from dotenv import dotenv_values
+            got = dotenv_values(path)
+            bad = [k for k, v in updates.items() if got.get(k) != v]
+            if bad:
+                _schreiben(original)
+                return False, f"Kontrolle fehlgeschlagen ({', '.join(bad)}), alter Inhalt wiederhergestellt"
+            return True, "ok"
+        except Exception as e:
+            if original is not None:
+                try:
+                    _schreiben(original)
+                except Exception:
+                    pass
+            return False, f"{str(e)[:80]}, alter Inhalt wiederhergestellt"
+
+
+def _ai_heal(prov, by_id, ranked_ids, best, paid_ok=True, verify=False, max_probes=None):
+    """Entscheidung fuer EINEN Anbieter. Rueckgabe: (neues_modell | None, hinweis | None, fehler | None).
+    paid_ok=True (OpenRouter): ein bewusst gewaehltes bezahltes Modell bleibt.
+    verify=True: auch ein gelistetes Modell bekommt EINEN Mini-Aufruf - ein Eintrag in der
+    Liste heisst nicht, dass es antwortet (Nvidia: 410 trotz Listung, Groq: 404 ohne Zugriff).
+    Anders als swarm.py: Ein Modell, das NICHT in der Liste steht oder im Betrieb gesperrt
+    wurde, wird erst gefragt und nur ersetzt, wenn es wirklich nicht mehr antwortet.
+    Bleibt die Pruefung ohne Ergebnis (Limit, Netz), wird nichts geaendert."""
+    label, current = _AI_LABEL[prov], ai_primary(prov)
+    entry = by_id.get(current)
+    listed = entry is not None
+    if listed and paid_ok and not _ai_or_is_free(entry) and not current.endswith(":free"):
+        return None, f"{label}: {current} - bezahltes Modell, bewusst gewählt: bleibt", None
+    if not current:
+        healthy, why = False, "kein Modell gesetzt"
+    elif listed and paid_ok and (not _ai_or_is_free(entry) or _ai_or_expires_soon(entry)):
+        healthy, why = False, "nicht mehr gratis oder läuft bald aus"
+    else:
+        healthy, why = True, ""
+        if not listed or verify or _ai_gesperrt(prov, current):
+            res = _ai_probe(prov, current)
+            logging.info(f"[MODELUPDATE] Probe {prov}/{current}: {res}")
+            if res == "dead":
+                healthy, why = False, "antwortet nicht mehr"
+            elif res == "ok":
+                with _ai_state_lock:
+                    _AI_REJECTED.pop((prov, current), None)      # war im Betrieb gesperrt, lebt aber
+            else:
+                return None, f"{label}: {current} - Prüfung ohne Ergebnis (Limit oder Netz): bleibt vorerst", None
+    if healthy and not best:
+        return None, f"{label}: {current} ✓ in Ordnung", None
+    if healthy:      # best: nur wechseln, wenn ein Kandidat strikt besser eingestuft ist
+        better = ranked_ids[:ranked_ids.index(current)] if current in ranked_ids else ranked_ids
+        why = "besseres Modell gefunden"
+    else:
+        better = ranked_ids
+    new, tested = _ai_pick_verified(prov, better, current, max_probes)
+    if new:
+        return new, f"{label}: Modell ersetzt: {current or '(leer)'} → {new} (Grund: {why})", None
+    if healthy:
+        return None, f"{label}: {current} ✓ in Ordnung (kein besseres Modell hat die Prüfung bestanden)", None
+    return None, None, (f"{label}: {current or '(leer)'} fällt aus ({why}), aber kein Ersatz hat die Prüfung "
+                        f"bestanden ({tested} Tests, {len(ranked_ids)} Kandidaten) - neuer Versuch beim nächsten Lauf")
+
+
+def ai_refresh_models(best=False, verify_current=False):
+    """best=False (Pruef-Thread, /update_models): nur reparieren, was tot ist.
+    best=True (/update_models best): zusaetzlich auf das beste Modell wechseln, das die Pruefung besteht.
+    verify_current=True: auch das gelistete Qwen-Modell per Mini-Aufruf pruefen. Groq und
+    Nvidia werden immer mit einem Mini-Aufruf geprueft.
+    Rueckgabe: {"changes": [...], "info": [...], "errors": [...]}"""
+    out = {"changes": [], "info": [], "errors": []}
+    if not _AI_RUN_LOCK.acquire(blocking=False):
+        out["info"].append("Modell-Prüfung läuft bereits")
+        return out
+    try:
+        updates = {}
+        pinned = {x.strip().upper() for x in os.getenv("MODEL_AUTOUPDATE_PIN", "").split("#")[0].split(",") if x.strip()}
+        _AI_HINT.clear()
+
+        def _lauf(prov, ranked, by_id, **kw):
+            ids = [m["id"] for m in ranked]
+            if best and ids:
+                out["info"].append(f"{_AI_LABEL[prov]}: beste Kandidaten: " + ", ".join(ids[:3]))
+            with _ai_state_lock:
+                _AI_BACKUPS[prov] = ids[:_AI_BACKUP_KEEP]
+            new, info, err = _ai_heal(prov, by_id, ids, best, **kw)
+            if err:
+                out["errors"].append(err)
+            elif info:
+                (out["changes"] if new else out["info"]).append(info)
+            if prov in _AI_HINT:
+                out["errors"].append(f"{_AI_LABEL[prov]}: {_AI_HINT[prov]}")
+            if new:
+                updates[prov] = new
+
+        def _aktiv(prov):
+            if not [k for k in _AI_KEYS.get(prov, []) if k]:
+                return False
+            if _AI_GLOBAL[prov] in pinned or _AI_ENV_KEY[prov] in pinned:
+                out["info"].append(f"{_AI_LABEL[prov]}: {ai_primary(prov) or '-'} - festgehalten (MODEL_AUTOUPDATE_PIN): bleibt")
+                return False
+            return True
+
+        # ── Groq ──
+        if _aktiv("groq"):
+            try:
+                cat = [m for m in _ai_catalog("groq") if m.get("id") and m.get("active", True) is not False]
+                ranked = sorted((m for m in cat if not _AI_NON_CHAT_RE.search(m["id"])), key=_ai_model_rank, reverse=True)
+                _lauf("groq", ranked, {m["id"]: m for m in cat}, paid_ok=False, verify=True)
+            except Exception as e:
+                out["errors"].append(f"{_AI_LABEL['groq']}: Modellliste nicht abrufbar: {str(e)[:100]}")
+
+        # ── Qwen ueber OpenRouter: Gratis-Qwen zuerst, dann andere Gratis-Modelle ──
+        if _aktiv("qwen"):
+            if "openrouter.ai" not in QWEN_BASE_URL:
+                out["info"].append("Qwen: QWEN_BASE_URL ist nicht OpenRouter - kein automatischer Wechsel")
+            else:
+                try:
+                    cat = [m for m in _ai_catalog("qwen") if m.get("id")]
+                    frei = sorted((m for m in cat if _ai_or_is_free(m) and _ai_or_is_text_chat(m)
+                                   and not _ai_or_expires_soon(m)), key=_ai_model_rank, reverse=True)
+                    ranked = [m for m in frei if "qwen" in m["id"].lower()] + [m for m in frei if "qwen" not in m["id"].lower()]
+                    _lauf("qwen", ranked, {m["id"]: m for m in cat}, paid_ok=True, verify=verify_current, max_probes=5)
+                except Exception as e:
+                    out["errors"].append(f"{_AI_LABEL['qwen']}: Modellliste nicht abrufbar: {str(e)[:100]}")
+
+        # ── Nvidia (die Liste fuehrt auch abgeschaltete Modelle -> immer pruefen) ──
+        if _aktiv("nvidia"):
+            try:
+                cat = [m for m in _ai_catalog("nvidia") if m.get("id")]
+                ranked = sorted((m for m in cat if not _AI_NON_CHAT_RE.search(m["id"])
+                                 and not _AI_NVIDIA_NON_CHAT_RE.search(m["id"])),
+                                key=lambda m: _ai_model_rank(m, cap=80), reverse=True)
+                _lauf("nvidia", ranked, {m["id"]: m for m in cat}, paid_ok=False, verify=True, max_probes=6)
+            except Exception as e:
+                out["errors"].append(f"{_AI_LABEL['nvidia']}: Modellliste nicht abrufbar: {str(e)[:100]}")
+
+        # ── Anwenden: erst .env (mit Rueckweg), dann die laufenden Werte ──
+        if updates:
+            env_werte = {}
+            for p, v in updates.items():
+                wert = v
+                if _AI_ENV_KEY[p] == "NVIDIA_MODELS":      # Schreibweise "a->b->c": nur das erste ersetzen
+                    rest = [x.strip() for x in os.getenv("NVIDIA_MODELS", "").split("#")[0].split("->")[1:]]
+                    wert = "->".join([v] + [x for x in rest if x and x != v])
+                env_werte[_AI_ENV_KEY[p]] = wert
+            ok, msg = _ai_env_set_verified(env_werte)
+            if not ok:
+                out["errors"].append(f".env nicht geschrieben ({msg}) - das neue Modell gilt bis zum nächsten Neustart")
+            for p, v in updates.items():
+                os.environ[_AI_ENV_KEY[p]] = env_werte[_AI_ENV_KEY[p]]
+                globals()[_AI_GLOBAL[p]] = v
+            logging.info(f"[MODELUPDATE] Ersatz-KI gesetzt: {updates} | .env: {msg}")
+        for line in out["changes"] + out["info"]:
+            logging.info(f"[MODELUPDATE] Ersatz-KI: {line}")
+        for line in out["errors"]:
+            logging.warning(f"[MODELUPDATE] Ersatz-KI: {line}")
+        with _ai_state_lock:
+            _AI_LAST.update(zeit=time.time(), changes=list(out["changes"]), info=list(out["info"]), errors=list(out["errors"]))
+        return out
+    finally:
+        _AI_RUN_LOCK.release()
+
+
+def ai_status_text(res=None):
+    """Stand der Ersatz-Anbieter fuer /update_models."""
+    now = time.time()
+    fmt = lambda ts: datetime.fromtimestamp(ts).strftime('%d.%m %H:%M')
+    with _ai_state_lock:
+        gesperrt = [(p, m, t + _AI_REJECT_TTL) for (p, m), t in _AI_REJECTED.items() if now - t < _AI_REJECT_TTL]
+        backups = {p: list(v) for p, v in _AI_BACKUPS.items()}
+        last = {k: (list(v) if isinstance(v, list) else v) for k, v in _AI_LAST.items()}
+    res = res or last
+    zeilen = ["🧩 ERSATZ-KI: MODELLE"]
+    for p in _AI_PROVIDER:
+        n = len([k for k in _AI_KEYS.get(p, []) if k])
+        if not n:
+            zeilen.append(f"{_AI_LABEL[p]}: kein Key in der .env - nicht benutzt")
+            continue
+        zeilen.append(f"{_AI_LABEL[p]}: {ai_primary(p) or '-'} (Keys: {n})")
+        kette = ai_model_chain(p)
+        if len(kette) > 1 or (kette and kette[0] != ai_primary(p)):
+            zeilen.append("   Kette jetzt: " + " → ".join(kette))
+        elif not backups.get(p):
+            zeilen.append("   Ersatzmodelle: noch keine Liste abgerufen")
+    if gesperrt:
+        zeilen.append("Gesperrt für 24 h (antwortet nicht): "
+                      + ", ".join(f"{_AI_LABEL[p]} {m} (bis {fmt(t)})" for p, m, t in gesperrt))
+    if last.get("zeit"):
+        zeilen.append(f"Letzte Prüfung: {fmt(last['zeit'])}")
+    for titel, key in (("Geändert:", "changes"), ("Hinweise:", "info"), ("Probleme:", "errors")):
+        if res.get(key):
+            zeilen.append(titel)
+            zeilen += [f"• {z}" for z in res[key]]
+    return "\n".join(zeilen)
+
+
+def _ai_modelupdate_loop():
+    """Wie _model_autoupdate_loop in swarm.py: 75 s nach dem Start, dann alle
+    MODEL_AUTOUPDATE_HOURS; ausser der Reihe, wenn ein Hauptmodell wegfaellt (entprellt, 5 Min)."""
+    def _flag(name, default="true"):
+        return os.getenv(name, default).split("#")[0].strip().lower() in ("1", "true", "yes", "on")
+    if not _flag("MODEL_AUTOUPDATE"):
+        return
+    try:
+        hours = float(os.getenv("MODEL_AUTOUPDATE_HOURS", "6").split("#")[0].strip())
+    except ValueError:
+        hours = 6.0
+    interval = max(hours, 0.5) * 3600          # nie oefter als alle 30 Min
+    logging.info(f"[MODELUPDATE] Ersatz-KI: Prüfung alle {interval / 3600:g} h und nach einem Modell-Ausfall")
+    time.sleep(75)                             # Start nicht bremsen, nach dem Gemini-Abgleich
+    forced = False
+    while True:
+        try:
+            res = ai_refresh_models(best=False, verify_current=forced)
+            if res["changes"] and _flag("MODEL_AUTOUPDATE_NOTIFY"):
+                try:
+                    bot.send_message(MY_CHAT_ID, "🔄 Ersatz-KI: Modell automatisch ersetzt\n"
+                                     + "\n".join(f"• {z}" for z in res["changes"]))
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.error(f"[MODELUPDATE] Ersatz-KI: Lauf fehlgeschlagen: {e}")
+        forced = _AI_HEAL_EVENT.wait(timeout=interval)       # True = Ausfall, False = Zeit um
+        if forced:
+            time.sleep(300)                                  # entprellen: eine Fehlerserie = ein Lauf
+        _AI_HEAL_EVENT.clear()
+
+
+# ============================================================
 # UNIVERSELLER AI-CALLER — alle Provider nach PROVIDER_ORDER
 # ============================================================
 def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
@@ -2137,71 +2780,37 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
         text = gemini_chain_generate(prompt, system or None)
         return text.strip() if text else None
 
+    def _msgs():
+        msgs = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({"role": "user", "content": prompt})
+        return msgs
+
+    # v15.22: Groq / Qwen / Nvidia laufen ueber die Modell-Kette (ai_chain_call, Logik aus
+    # swarm.py): Key-Wechsel bei 401/429, Modell-Wechsel bei 404/410/5xx; ein totes Modell
+    # wird 24 h gesperrt und vom Pruef-Thread ersetzt. Vorher: ein festes Modell je Anbieter.
     def _try_groq():
-        if not GROQ_KEYS:
-            return None
-        for i, key in enumerate(GROQ_KEYS):
-            try:
-                import groq as _groq
-                client = _groq.Groq(api_key=key)
-                msgs = []
-                if system:
-                    msgs.append({"role": "system", "content": system})
-                msgs.append({"role": "user", "content": prompt})
-                resp = client.chat.completions.create(
-                    model=GROQ_MODEL, messages=msgs, max_tokens=4096
-                )
-                text = resp.choices[0].message.content.strip()
-                if text:
-                    logging.info(f"[OK] Groq ({GROQ_MODEL}, key {i+1})")
-                    return text
-            except Exception as e:
-                logging.warning(f"Groq key {i+1} hata: {e}")
-                time.sleep(1)
-        return None
+        def _einmal(key, model):
+            import groq as _groq
+            resp = _groq.Groq(api_key=key).chat.completions.create(
+                model=model, messages=_msgs(), max_tokens=4096)
+            return resp.choices[0].message.content
+        return ai_chain_call("groq", _einmal)
 
     def _try_qwen():
-        if not QWEN_API_KEY:
-            return None
-        try:
-            client = _openai.OpenAI(api_key=QWEN_API_KEY, base_url=QWEN_BASE_URL)
-            msgs = []
-            if system:
-                msgs.append({"role": "system", "content": system})
-            msgs.append({"role": "user", "content": prompt})
-            resp = client.chat.completions.create(
-                model=QWEN_MODEL, messages=msgs, max_tokens=4096
-            )
-            text = resp.choices[0].message.content.strip()
-            if text:
-                logging.info(f"[OK] Qwen ({QWEN_MODEL})")
-                return text
-        except Exception as e:
-            logging.warning(f"Qwen hata: {e}")
-        return None
+        def _einmal(key, model):
+            client = _openai.OpenAI(api_key=key, base_url=QWEN_BASE_URL)
+            resp = client.chat.completions.create(model=model, messages=_msgs(), max_tokens=4096)
+            return resp.choices[0].message.content
+        return ai_chain_call("qwen", _einmal)
 
     def _try_nvidia():
-        if not NVIDIA_API_KEY:
-            return None
-        try:
-            client = _openai.OpenAI(
-                api_key=NVIDIA_API_KEY,
-                base_url="https://integrate.api.nvidia.com/v1"
-            )
-            msgs = []
-            if system:
-                msgs.append({"role": "system", "content": system})
-            msgs.append({"role": "user", "content": prompt})
-            resp = client.chat.completions.create(
-                model=NVIDIA_MODEL, messages=msgs, max_tokens=4096
-            )
-            text = resp.choices[0].message.content.strip()
-            if text:
-                logging.info(f"[OK] Nvidia ({NVIDIA_MODEL})")
-                return text
-        except Exception as e:
-            logging.warning(f"Nvidia hata: {e}")
-        return None
+        def _einmal(key, model):
+            client = _openai.OpenAI(api_key=key, base_url=NVIDIA_BASE_URL)
+            resp = client.chat.completions.create(model=model, messages=_msgs(), max_tokens=4096)
+            return resp.choices[0].message.content
+        return ai_chain_call("nvidia", _einmal)
 
     PROVIDER_FN = {
         "gemini": _try_gemini,
@@ -5207,7 +5816,16 @@ if not MY_CHAT_ID:
             logging.warning(f"Einrichtung Chat-ID: {_e}")
 
 
+_ENV_WRITE_LOCK = threading.RLock()   # v15.22: ein Schreiber an der .env zur Zeit (Sprachwahl, Modellwechsel)
+
+
 def env_set(name, value):
+    """v15.22: nie gleichzeitig mit dem automatischen Modellwechsel in die .env schreiben."""
+    with _ENV_WRITE_LOCK:
+        return _env_set_roh(name, value)
+
+
+def _env_set_roh(name, value):
     """Einen Eintrag in der .env setzen: vorhandene Zeile ersetzen, sonst anhaengen.
     Rueckgabe: (ok, fehlertext). Schreibt erst in eine Nebendatei und tauscht dann."""
     path = os.path.join(BASE_DIR, ".env")
@@ -8840,10 +9458,17 @@ def handle_sl_weiten(message):
 
 @bot.message_handler(commands=CMD('update_models'))
 def handle_update_models(message):
-    """v15.15: Gemini-Modellliste jetzt neu holen und die Kette anzeigen (wie in swarm.py)."""
+    """v15.15: Gemini-Modellliste jetzt neu holen und die Kette anzeigen (wie in swarm.py).
+    v15.22: dazu Groq / Qwen / Nvidia pruefen und reparieren.
+    /update_models       -> pruefen; nur ersetzen, was nicht mehr antwortet
+    /update_models best  -> zusaetzlich auf das beste Modell wechseln, das die Pruefung besteht"""
     try:
+        _teile = (message.text or "").split()
+        _best = len(_teile) > 1 and _teile[1].lower() in ("best", "beste", "bestes", "eniyi", "en_iyi")
+        bot.send_message(MY_CHAT_ID, "🔍 Modelle werden geprüft ... das kann ein paar Minuten dauern.")
         gemini_refresh_catalog()
-        bot.send_message(MY_CHAT_ID, gemini_status_text())
+        _res = ai_refresh_models(best=_best, verify_current=True)
+        bot.send_message(MY_CHAT_ID, (gemini_status_text() + "\n\n" + ai_status_text(_res))[:4000])
     except Exception as e:
         bot.send_message(MY_CHAT_ID, f"❌ Modell-Update: {e}")
 
@@ -10658,9 +11283,9 @@ Komutlar: /help
         elif _prov == "groq":
             _cnt = len(GROQ_KEYS) if GROQ_KEYS else 0
         elif _prov == "qwen":
-            _cnt = 1 if QWEN_API_KEY else 0  # v15.15
+            _cnt = len(_AI_KEYS["qwen"])  # v15.22: alle Keys zaehlen
         elif _prov == "nvidia":
-            _cnt = 1 if NVIDIA_API_KEY else 0  # v15.15
+            _cnt = len(_AI_KEYS["nvidia"])  # v15.22
         else:
             _cnt = 1 if os.getenv(f"{_prov.upper()}_API_KEY", "").strip() else 0
         _prov_display.append(f"{_prov}({_cnt})")
@@ -10711,6 +11336,7 @@ Komutlar: /help
     threading.Thread(target=schutz_loop, daemon=True).start()
     threading.Thread(target=news_collector_loop, daemon=True).start()
     threading.Thread(target=_gemini_modelupdate_loop, daemon=True).start()  # v15.15: Gemini-Modellliste aktuell halten
+    threading.Thread(target=_ai_modelupdate_loop, daemon=True).start()      # v15.22: Groq/Qwen/Nvidia-Modelle aktuell halten
 
     threading.Thread(target=exit_monitor_loop, daemon=True).start()
     logging.info("✅ Exit-Monitor Thread gestartet")
