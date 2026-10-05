@@ -1720,6 +1720,14 @@ RULES = [
      'Vollständiger Diagnose-Bericht (auf Deutsch)',
      'Full diagnosis report (in German)',
      'Tam teşhis raporu (Almanca)'),
+    ('↩️ {0}: Gegensignal {1}->{2} - nur geschlossen, keine Gegenposition',
+     '↩️ {0}: Gegensignal {1}->{2} - nur geschlossen, keine Gegenposition',
+     '↩️ {0}: opposite signal {1}->{2} - closed only, no opposite position',
+     '↩️ {0}: karşı sinyal {1}->{2} - yalnızca kapatıldı, karşı pozisyon yok'),
+    ('⚠️ {0}: Schließen fehlgeschlagen - {1}',
+     '⚠️ {0}: Schließen fehlgeschlagen - {1}',
+     '⚠️ {0}: closing failed - {1}',
+     '⚠️ {0}: kapatma başarısız - {1}'),
 ]
 
 

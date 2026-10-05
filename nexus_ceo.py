@@ -3,6 +3,13 @@
 # |  NEXUS NATURE v15.8 - BRIDGEWATER EDITION                          |
 # |  Datei: nexus_ceo.py                                                |
 # |  Erstellt: 2026-07-14  |  Zuletzt geaendert: 2026-09-21            |
+# |  Aenderungen v15.21 (2026-10-06):                                   |
+# |    - Gegensignal = nur schliessen: keine sofortige Gegen-Order     |
+# |      mehr (sie lief ohne Pruefungen und ohne Bestaetigung); die    |
+# |      neue Richtung eroeffnet der naechste Scan als normale Order   |
+# |    - Ergebnis jedes Scans steht jetzt auch im Log (Trade-Ergebnis) |
+# |    - Schliessen fehlgeschlagen: Grund wird gemeldet; ein Verlust   |
+# |      zaehlt nur, wenn die Position wirklich geschlossen wurde      |
 # |  Aenderungen v15.20 (2026-10-06):                                   |
 # |    - /diagnose (/diagnosis, /teshis) und Taste: startet            |
 # |      nexus_diagnose.py (eigene Datei, nur lesend) und schickt die  |
@@ -809,7 +816,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.20"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v15.21"                                       # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -8285,54 +8292,38 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
             is_gegenrichtung = (side == "SELL" and curr_direction == "BUY") or \
                                (side == "BUY" and curr_direction == "SELL")
 
-            # Gegenrichtung = EXIT alle Positionen + sofort Gegenposition
-            # (egal welcher PYRAMIDING Wert - Richtungswechsel ist immer EXIT)
+            # v15.21: Gegensignal = NUR SCHLIESSEN. Es wird keine Gegenposition mehr eroeffnet.
+            # Vorher schickte der Bot sofort eine Gegen-Order - ohne die Pruefungen und ohne die
+            # Bestaetigung einer normalen Order (05.10.: dreimal gedreht, keine Gegenposition
+            # entstanden, einmal blieb sogar die alte Position offen). Bleibt das Signal bestehen,
+            # eroeffnet der naechste Scan die neue Richtung als normale Position mit allen Pruefungen.
             if is_gegenrichtung:
                 logging.warning(f"EXIT: {sym} {curr_direction}->{side}, {len(epic_positions)} Pos")
                 geschlossen = 0
                 for pos in epic_positions:
                     try:
                         r = requests.delete(f"{CAPITAL_URL}/positions/{pos['position']['dealId']}", headers=h, timeout=10)
-                        if r.status_code == 200: geschlossen += 1
+                        if r.status_code == 200:
+                            geschlossen += 1
+                            try:  # Verlust nur zaehlen, wenn die Position wirklich geschlossen wurde
+                                upl_val = float(pos["position"].get("upl", 0) or 0)
+                                if upl_val < 0:
+                                    kayip_ekle(sym)
+                                    logging.warning(f"EXIT kayip: {sym} UPL={upl_val:.2f}")
+                            except Exception:
+                                pass
+                        else:
+                            _grund = f"HTTP {r.status_code} {r.text[:120]}"
+                            logging.error(f"Exit Fehler {sym}: {_grund}")
+                            results.append(f"⚠️ {sym}: Schließen fehlgeschlagen - {_grund}")
                     except Exception as e:
                         logging.error(f"Exit Fehler: {e}")
-                reset_pyramiding_stufe(epic)
+                        results.append(f"⚠️ {sym}: Schließen fehlgeschlagen - {str(e)[:120]}")
+                if geschlossen == len(epic_positions):
+                    reset_pyramiding_stufe(epic)
                 results.append(f"{sym}: {geschlossen}/{len(epic_positions)} kapatıldı (ÇIKIŞ)")
-                # Kayip mi kar mi? UPL kontrolu
-                for pos in epic_positions:
-                    try:
-                        upl_val = float(pos["position"].get("upl", 0) or 0)
-                        if upl_val < 0:
-                            kayip_ekle(sym)
-                            logging.warning(f"EXIT kayip: {sym} UPL={upl_val:.2f}")
-                    except: pass
-                # Sofort Gegenposition eroeffnen
-                _units_gegen = safe_trade_size(size, cfg, epic)
-                if not _units_gegen or _units_gegen <= 0:
-                    # v15.10: Groesse ausserhalb der .env-Limits -> keine Gegenposition
-                    results.append(f"⛔ {sym}: Gegenposition NICHT eroeffnet - Groesse ausserhalb der .env-Limits")
-                    continue
-                _sl_gegen = float(sl)
-                try:  # v15.17: Rausch-Schutz auch hier (vorher ging der KI-Stop ungeprueft durch)
-                    _snap_g = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10).json().get("snapshot", {})
-                    _px_g = float((_snap_g.get("offer") if side.upper() == "BUY" else _snap_g.get("bid")) or 0)
-                    if _px_g > 0:
-                        _d_g, _i_g = sl_min_distance(epic, _px_g, cfg.get('min_stop_pct', 0.015))
-                        _sl_gegen, _ch_g = sl_auf_mindestabstand(side, _sl_gegen, _px_g, _d_g)
-                        if _ch_g:
-                            results.append(f"{sym} SL güncellendi: {float(sl)} -> {_sl_gegen} ({_i_g})")
-                except Exception as _g_e:
-                    logging.warning(f"{sym} Gegenposition Rausch-Schutz: {_g_e}")
-                r2 = requests.post(f"{CAPITAL_URL}/positions", json={
-                    "epic": epic, "direction": side.upper(),
-                    "size": _units_gegen,
-                    "type": "MARKET", "stopLevel": _sl_gegen, "profitLevel": float(tp)
-                }, headers=h, timeout=10)
-                if r2.status_code == 200:
-                    set_pyramiding_stufe(epic, 1)
-                    results.append(f"{sym} karşı pozisyon açıldı ({side}) Stufe 1/4")
-                else:
-                    results.append(f"{sym} karşı pozisyon BAŞARISIZ: {r2.text[:100]}")
+                if geschlossen > 0:
+                    results.append(f"↩️ {sym}: Gegensignal {curr_direction}->{side} - nur geschlossen, keine Gegenposition")
                 continue
 
             # Gleiche Richtung + PYRAMIDING: 0 = erste Position bereits offen,
@@ -10517,6 +10508,10 @@ def main_loop():
                     #     try: bot.send_message(MY_CHAT_ID, f"⚠️ Haftasonu kripto limiti")
                     #     except: pass
             res = execute_nexus_trade(analysis, erlaubte_signale=_fallback_signale)
+            if res:  # v15.21: vorher stand das Ergebnis nur in Telegram - fuer die Diagnose auch ins Log
+                for _erg_z in str(res).splitlines():
+                    if _erg_z.strip():
+                        logging.info(f"Trade-Ergebnis: {_erg_z}")
             if scan_meldungen(analysis, res):  # v15.18: True = es wurde gehandelt
                 # Nach Trade: echten Depot-Stand per Telegram senden
                 try:

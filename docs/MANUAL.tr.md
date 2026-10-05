@@ -1,6 +1,6 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.20)
+# NEXUS CEO – Kullanım Kılavuzu (v15.21)
 
-NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.20 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
+NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.21 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
 Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
@@ -118,19 +118,17 @@ Emtia sinyalleri günlük mumlardan gelir. Gün içinde pek değişmezler; bu y�
 ### Zaten açık bir pozisyon varsa ne olur
 
 - **Aynı yön:** Bot yalnızca pozisyon en az %2 kârdaysa ekleme yapar (Pyramiding). Aksi hâlde protokolde “… Pyramiding atlandı: …” yazar.
-- **Karşı yön (yön değiştirme):** Taramada yönü açık pozisyonla çelişen bir TRADE satırı gelirse (pozisyon BUY, satır SELL ya da tersi), bot bu sembolün tüm pozisyonlarını kapatır ve hemen karşı pozisyonu açar.
+- **Karşı yön:** Taramada yönü açık pozisyonla çelişen bir TRADE satırı gelirse (pozisyon BUY, satır SELL ya da tersi), bot bu sembolün tüm pozisyonlarını kapatır. Karşı pozisyon açmaz.
 
-Yön değiştirme şöyle ilerler:
+Şöyle ilerler:
 
-1. Satır bölüm 8'deki kilitlerden geçmelidir: günlük kayıp durdurması, `MAX_POSITIONEN` değerinden az açık pozisyon, piyasa açık, spread, kayıp kilidi. Yeniden giriş kilidi ve %2 kuralı yön değiştirmede geçerli değildir.
-2. Bot sembolün tüm pozisyonlarını kapatır. Ekside olan her pozisyon, kayıp kilidi için kayıp sayılır.
-3. Büyüklüğü, ilk pozisyonda olduğu gibi `.env` üzerinden yeniden hesaplar.
-4. Stop yapay zekâdan gelir ve asgari mesafeye çekilir. Hedef yapay zekâdan değiştirilmeden gelir.
-5. Piyasa emrini gönderir ve “… karşı pozisyon açıldı (…) Seviye 1/4” bildirir.
+1. Satır bölüm 8'deki kilitlerden geçmelidir: günlük kayıp durdurması, `MAX_POSITIONEN` değerinden az açık pozisyon, piyasa açık, spread, kayıp kilidi.
+2. Bot sembolün tüm pozisyonlarını kapatır. Kapatılan ve ekside olan her pozisyon, kayıp kilidi için kayıp sayılır.
+3. Protokolde “↩️ …: karşı sinyal …->… - yalnızca kapatıldı, karşı pozisyon yok” yazar. Kapatma başarısız olursa nedeni orada yazar.
 
-Yön değiştirmede, normal bir açılışta bulunan dört denetim eksiktir: stop ve hedefin fiyatın doğru tarafında olup olmadığı, marjin denetimi, yedek hedef ve 8 saniye sonraki onay. Bot, Capital.com emri kabul eder etmez karşı pozisyonu bildirir. Böyle bir mesajdan sonra `/pozisyon` ile pozisyonun gerçekten orada olup olmadığına bak.
+Karşı sinyal sürerse, sonraki tarama yeni yönü tüm denetimlerle normal bir pozisyon olarak açar. v15.20'ye kadar bot bu denetimler olmadan hemen karşı emir gönderiyordu.
 
-Yön değiştirme yalnızca taramada yapılır. Çıkış izleyicisi yalnızca kapatır, hiçbir şey açmaz.
+Karşı sinyale yalnızca tarama tepki verir. Çıkış izleyicisi kendi kurallarına göre kapatır.
 
 ### Bunların yanında sürekli çalışanlar
 
@@ -473,11 +471,10 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 - **Yarıya indirme yalnızca dört coin için.** BTC, ETH, SOL ve XRP'de yarıya indirilir. Diğer coin'ler tam büyüklükle çalışır.
 - **On iki coin kripto sayılmaz.** Bot kriptoyu sabit bir ad listesinden tanır. Birlikte gelen piyasa listesindeki AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX ve XTZ bu listede yok. Bunlara emtia kuralları uygulanır: 5 Kurul oyundan 4'ü ve hafta sonu işlem yok.
 - **Korelasyon denetlenmez.** Crude, Heating Oil ve Gasoline gibi akraba piyasalar bağımsız pozisyon sayılır.
-- **5 pozisyondan itibaren yön değiştirme yok.** 5 veya daha fazla açık pozisyonda bot, bir sinyal mevcut bir pozisyonun yönünü değiştirecek olsa bile her denetimden önce durur.
+- **5 pozisyondan itibaren karşı sinyal işlemez.** 5 veya daha fazla açık pozisyonda bot her denetimden önce durur. O zaman karşı sinyal mevcut pozisyonu da kapatmaz.
 - **Bot veritabanındaki istatistik ve günlük hedef eksiktir.** Veritabanı yalnızca botun kendisinin tetiklediği kapanışları bilir. Esas alınacak olan Capital uygulamasındaki dökümdür.
 - **Manuel işlem** ne gürültü korumasını ne de `MAX_POSITION_EUR` değerini kullanır.
 - **Metinle HARD BLOCK (işlem engeli) çalışmaz.** “gold” gibi sözcükleri bir sembole bağlayan tablo, kodun daha aşağısında aynı adı taşıyan ikinci bir tablo (`ASSET_KEYWORDS`, haberler için) tarafından ezilir. Bu yüzden bot hiçbir cümlede sembol tanımaz ve hiçbir zaman engel koymaz. Hata bilerek düzeltilmedi: düzeltilseydi, içinde “sell”, “close”, “verkaufen” veya “kapat” ile bir sembol adı geçen bir cümle bu sembolün pozisyonlarını hemen kapatırdı.
-- **Sonradan denetimsiz yön değiştirme.** Bkz. bölüm 5.
 - **Haftalık öğrenme turundan gelen kilitler** yalnızca adında alt çizgi olmayan sembollerde devreye girer.
 
 ### Koruma işlevlerinin sınırları
