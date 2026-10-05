@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "3 (fuer NEXUS v15.20)"
+VERSION = "4 (fuer NEXUS v15.20)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -85,6 +85,8 @@ EREIGNISSE = [
     ("KI: Ersatz Nvidia", "[OK] Nvidia"),
     ("KI: Ersatz Ollama (lokal)", "[OK] Ollama"),
     ("Ersatzbetrieb im Scan", "fallback analiz"),
+    ("KI: Gemini-Kette ohne Antwort", "kombinasyonları quota dolu"),
+    ("KI: alle Ersatz-Anbieter ausgefallen", "Tüm AI provider başarısız"),
     ("Warnung im Stop-Lauf (Trailing SL epic)", "Trailing SL epic"),
     ("Sprache gesetzt", "Sprache gesetzt"),
 ]
@@ -269,11 +271,12 @@ def teil1(bot_dir, days):
     jetzt = datetime.now()
     ab = jetzt - timedelta(days=days)
     heute, gestern = jetzt.date(), (jetzt - timedelta(days=1)).date()
-    cnt_all, cnt_heute, cnt_gestern = Counter(), Counter(), Counter()
+    cnt_all, cnt_heute, cnt_gestern, cnt_24 = Counter(), Counter(), Counter(), Counter()
     letzte = defaultdict(list)
     gem_art, sl_mult = Counter(), Counter()
     fehler, schliess = Counter(), []
     fehler_bsp = {}
+    anbieter, exits = defaultdict(Counter), []
     erste, letzte_ts, zeilen = None, None, 0
     for f in files:
         try:
@@ -296,6 +299,8 @@ def teil1(bot_dir, days):
                     for name, pat in EREIGNISSE:
                         if (pat in line) if isinstance(pat, str) else pat.search(line):
                             cnt_all[name] += 1
+                            if ts >= jetzt - timedelta(hours=24):
+                                cnt_24[name] += 1
                             if ts.date() == heute:
                                 cnt_heute[name] += 1
                             elif ts.date() == gestern:
@@ -305,6 +310,12 @@ def teil1(bot_dir, days):
                     m = re.search(r"Gemini (\S+) key=\.\.\.\S+: (\w+) \|", line)
                     if m:
                         gem_art[(m.group(1), m.group(2))] += 1
+                    m = re.search(r"\b(Groq|Qwen|Nvidia|Ollama)(?: key \d+)? hata: (.*)", line)
+                    if m:
+                        anbieter[m.group(1)][re.sub(r"\d+(?:[.,]\d+)?", "#", mask(m.group(2).strip()))[:120]] += 1
+                    m = re.search(r"EXIT: (\S+) (BUY|SELL)->(BUY|SELL)", line)
+                    if m:
+                        exits.append((ts, m.group(1), m.group(2), m.group(3)))
                     m = re.search(r"minimum mesafe: ([\d.]+) × Tagesspanne", line)
                     if m:
                         sl_mult[m.group(1)] += 1
@@ -321,7 +332,8 @@ def teil1(bot_dir, days):
         print("  keine Logzeilen im Zeitraum")
         return
     print("  %d Zeilen von %s bis %s" % (zeilen, erste.strftime("%d.%m. %H:%M"), letzte_ts.strftime("%d.%m. %H:%M")))
-    K["heute"], K["alle"], K["fehler"] = dict(cnt_heute), dict(cnt_all), sum(fehler.values())
+    K["heute"], K["alle"], K["fehler"] = dict(cnt_24), dict(cnt_all), sum(fehler.values())
+    K["exits"] = exits
     print()
     print("  %-44s %7s %8s %8s" % ("Ereignis", "heute", "gestern", "%d Tage" % days))
     for name, _ in EREIGNISSE:
@@ -338,6 +350,14 @@ def teil1(bot_dir, days):
         print("  Gemini-Fehlschlaege nach Modell und Art (tot/tageslimit/key/keytot/modell/abbruch):")
         for (modell, art), n in sorted(gem_art.items(), key=lambda x: -x[1])[:8]:
             print("    %5d x  %-28s %s" % (n, modell, art))
+    if anbieter:
+        print("  Ersatz-Anbieter: Fehlschlaege und haeufigste Fehlermeldung (Erfolge stehen oben als 'KI: Ersatz ...'):")
+        for name in ("Groq", "Qwen", "Nvidia", "Ollama"):
+            if anbieter.get(name):
+                print("    %-7s %5d Fehlschlaege" % (name, sum(anbieter[name].values())))
+                for text, n in anbieter[name].most_common(2):
+                    print("            %5d x  %s" % (n, text))
+        K["anbieter"] = {k: sum(v.values()) for k, v in anbieter.items()}
     if sl_mult:
         print("  Stop-Korrekturen nach Faktor (SL_ATR_MULT zum Zeitpunkt): " +
               ", ".join("%s x Tagesspanne: %d" % (k, n) for k, n in sorted(sl_mult.items())))
@@ -380,80 +400,95 @@ def teil1(bot_dir, days):
 # ---------------------------------------------------------------------------------------
 # TEIL 2: Capital.com
 # ---------------------------------------------------------------------------------------
-def positionen_bilden(activities):
-    """Aus den POSITION-Eintraegen je Epic Positionen bilden (Netto-Rechnung ueber Richtung und Groesse).
-    Rueckgabe: Liste von dicts {epic, name, dir, open, close, groesse, einstieg, grund, teile}."""
-    je_epic = defaultdict(list)
+def positionen_bilden(activities, offen_ids):
+    """Positionen aus den POSITION-Eintraegen bilden.
+    Capital.com: Der Eroeffnungs-Eintrag hat kein openPrice. Jeder Teilverkauf und die Schliessung
+    tragen die dealId der Position und ein openPrice. Geschlossen ist eine Position, wenn ihre dealId
+    nicht mehr unter den offenen Positionen steht.
+    offen_ids = Menge der offenen dealIds oder None (dann zaehlt die verkaufte Groesse)."""
+    pos = {}
     for a in activities:
-        if a.get("type") == "POSITION" and str(a.get("status")).upper() == "ACCEPTED":
-            det = a.get("details") or {}
-            t = zeit(a.get("dateUTC") or a.get("dateUtc") or a.get("date"))
-            if t and det.get("direction") in ("BUY", "SELL") and zahl(det.get("size")) > 0:
-                je_epic[a.get("epic")].append((t, a, det))
-    fertig = []
-    for epic, liste in je_epic.items():
-        liste.sort(key=lambda x: x[0])
-        akt, netto = None, 0.0
-        for t, a, det in liste:
-            richtung, groesse = det["direction"], zahl(det.get("size"))
-            if akt is None or netto <= 1e-9:
-                akt = {"epic": epic, "name": det.get("marketName") or epic, "dir": richtung, "open": t, "close": None,
-                       "groesse": groesse, "einstieg": zahl(det.get("level")), "grund": None, "teile": 0, "abbau": []}
-                fertig.append(akt)
-                netto = groesse
-            elif richtung == akt["dir"]:
-                netto += groesse                       # Aufstocken (Pyramiding)
-                akt["groesse"] += groesse
+        if a.get("type") != "POSITION" or str(a.get("status")).upper() != "ACCEPTED":
+            continue
+        det = a.get("details") or {}
+        t = zeit(a.get("dateUTC") or a.get("dateUtc") or a.get("date"))
+        if not t or det.get("direction") not in ("BUY", "SELL"):
+            continue
+        did = a.get("dealId") or "ohne-%s-%s" % (a.get("epic"), t)
+        groesse = zahl(det.get("size"))
+        if "openPrice" not in det:                      # Eroeffnung
+            if did in pos and pos[did]["open"] is None:  # Schliessung stand vor der Eroeffnung in der Liste
+                pos[did].update(open=t, groesse=groesse, einstieg=zahl(det.get("level")), dir=det["direction"])
+            elif did not in pos:
+                pos[did] = {"id": did, "epic": a.get("epic"), "name": det.get("marketName") or a.get("epic"),
+                            "dir": det["direction"], "open": t, "close": None, "groesse": groesse,
+                            "einstieg": zahl(det.get("level")), "grund": None, "teile": 0, "abbau": [], "weg": 0.0}
             else:
-                netto -= groesse                       # Teilverkauf oder Schliessung
-                akt["teile"] += 1
-                akt["abbau"].append(t)
-                if netto <= 1e-9:
-                    akt["close"], akt["grund"] = t, str(a.get("source") or "?").upper()
-                    rest = -netto
-                    netto, alt = 0.0, akt
-                    akt = None
-                    if rest > 1e-9:                    # mehr geschlossen als offen = Drehen in einer Order
-                        akt = {"epic": epic, "name": alt["name"], "dir": richtung, "open": t, "close": None,
-                               "groesse": rest, "einstieg": zahl(det.get("level")), "grund": None, "teile": 0, "abbau": []}
-                        fertig.append(akt)
-                        netto = rest
-    fertig.sort(key=lambda p: p["open"])
+                pos[did]["groesse"] = (pos[did]["groesse"] or 0) + groesse     # Aufstocken unter derselben dealId
+        else:                                           # Teilverkauf oder Schliessung
+            if did not in pos:                          # Position wurde vor dem Zeitraum eroeffnet
+                pos[did] = {"id": did, "epic": a.get("epic"), "name": det.get("marketName") or a.get("epic"),
+                            "dir": "SELL" if det["direction"] == "BUY" else "BUY", "open": None, "close": None,
+                            "groesse": None, "einstieg": zahl(det.get("openPrice")), "grund": None, "teile": 0,
+                            "abbau": [], "weg": 0.0}
+            p = pos[did]
+            p["teile"] += 1
+            p["weg"] += groesse
+            p["abbau"].append((t, str(a.get("source") or "?").upper()))
+    fertig = list(pos.values())
+    for p in fertig:
+        if not p["abbau"]:
+            continue
+        if offen_ids is not None:
+            zu = p["id"] not in offen_ids
+        else:
+            zu = p["groesse"] is not None and p["weg"] >= p["groesse"] - 1e-9
+        if zu:
+            p["close"], p["grund"] = p["abbau"][-1]
+    fertig.sort(key=lambda p: p["open"] or p["abbau"][0][0])
     return fertig
 
 
 def buchungen_zuordnen(positionen, trades):
-    """Jede TRADE-Buchung einer Position desselben Epics zuordnen: zuerst der, die kurz davor
-    verkleinert oder geschlossen wurde (eine Buchung entsteht beim Schliessen), sonst der, in deren
-    Laufzeit sie faellt."""
+    """Jede TRADE-Buchung ihrer Position zuordnen: ueber die dealId der Buchung, sonst ueber
+    Epic und Zeit (kurz nach einem Teilverkauf oder einer Schliessung)."""
+    nach_id = {p["id"]: p for p in positionen}
     je_epic = defaultdict(list)
     for p in positionen:
         p["summe"], p["buchungen"] = 0.0, 0
         je_epic[p["epic"]].append(p)
     ohne = []
-    for t, betrag, epic in trades:
-        nah = []
-        for p in je_epic.get(epic, []):
-            for ab in p["abbau"]:
-                abstand = (t - ab).total_seconds()
-                if -5 <= abstand <= 300:
-                    nah.append((abs(abstand), id(p), p))
-        if nah:
-            p = min(nah, key=lambda x: x[0])[2]
-            p["summe"] += betrag
-            p["buchungen"] += 1
-            continue
-        kand = [p for p in je_epic.get(epic, [])
-                if p["open"] - timedelta(seconds=5) <= t <= (p["close"] or datetime.max - timedelta(days=1)) + timedelta(seconds=120)]
-        if not kand:
-            kand = [p for p in je_epic.get(epic, []) if p["open"] <= t]
-        if kand:
-            p = kand[-1]
-            p["summe"] += betrag
-            p["buchungen"] += 1
-        else:
+    for t, betrag, epic, did in trades:
+        p = nach_id.get(did)
+        if p is None:
+            nah = []
+            for q in je_epic.get(epic, []):
+                for ab, _quelle in q["abbau"]:
+                    abstand = (t - ab).total_seconds()
+                    if -5 <= abstand <= 300:
+                        nah.append((abs(abstand), id(q), q))
+            p = min(nah, key=lambda x: x[0])[2] if nah else None
+        if p is None:
             ohne.append((t, betrag, epic))
+        else:
+            p["summe"] += betrag
+            p["buchungen"] += 1
     return ohne
+
+
+def epic_von(sym, bot_dir):
+    """Symbol aus dem Log (OIL_CRUDE, HEATING_OIL) -> Epic bei Capital.com (HEATINGOIL)."""
+    if "cfg" not in K:
+        K["cfg"] = {}
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("nexus_cfg_diag", str(Path(bot_dir) / "capital_markets_config.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            K["cfg"] = {k: v.get("epic", k) for k, v in mod.MARKET_CONFIG.items()}
+        except Exception:
+            pass
+    return K["cfg"].get(sym, sym)
 
 
 def kennzahlen(werte):
@@ -532,11 +567,13 @@ def teil2(env, days):
                                       else "aus (richtig fuer Mirror-TP)"))
 
     # ---- offene Positionen ------------------------------------------------------------
+    offen_ids = None
     pos = get("/positions")
     if "_error" in pos:
         print("  Positionen nicht lesbar: %s" % pos["_error"])
     else:
         offen = pos.get("positions", [])
+        offen_ids = set((p.get("position") or {}).get("dealId") for p in offen)
         print("\n  OFFENE POSITIONEN: %d" % len(offen))
         K["offen"] = []
         for p in offen:
@@ -600,7 +637,7 @@ def teil2(env, days):
         if t.get("transactionType") == "TRADE":
             tt = zeit(t.get("dateUtc") or t.get("date"))
             if tt:
-                trades.append((tt, zahl(t.get("size")), str(t.get("instrumentName"))))
+                trades.append((tt, zahl(t.get("size")), str(t.get("instrumentName")), t.get("dealId")))
     andere = Counter()
     for t in buch:
         if t.get("transactionType") != "TRADE":
@@ -610,13 +647,14 @@ def teil2(env, days):
         return {"aktivitaeten": len(akt), "buchungen": len(buch)}
 
     # ---- Kennzahlen: je Buchung und je Position --------------------------------------
-    positionen = positionen_bilden(akt)
+    positionen = positionen_bilden(akt, offen_ids)
     ohne = buchungen_zuordnen(positionen, trades)
     zu = [p for p in positionen if p["close"] is not None and p["buchungen"] > 0]
+    frueher = [p for p in zu if p["open"] is None]
     print("\n  ERGEBNIS (EUR laut Buchungen)")
-    K["kb"] = kennzahlen([b for _, b, _ in trades])
+    K["kb"] = kennzahlen([b for _, b, _, _ in trades])
     print(kennzahlen_zeile("je Buchung (wie Capital)", K["kb"]))
-    letzte24 = [b for tt, b, _ in trades if tt >= jetzt - timedelta(hours=24)]
+    letzte24 = [b for tt, b, _, _ in trades if tt >= jetzt - timedelta(hours=24)]
     if letzte24:
         K["k24"] = kennzahlen(letzte24)
         print(kennzahlen_zeile("  davon letzte 24 h", K["k24"]))
@@ -624,30 +662,33 @@ def teil2(env, days):
         K["kp"] = kennzahlen([p["summe"] for p in zu])
         print(kennzahlen_zeile("je Position (geschlossen)", K["kp"]))
         print("  Eine Position mit drei Teilverkaeufen zaehlt bei Capital.com als drei Gewinner, ein Stop Loss als ein Verlierer.")
+        if frueher:
+            print("  %d dieser Positionen wurden vor dem Zeitraum eroeffnet: Teilverkaeufe von davor fehlen in ihrem Ergebnis." % len(frueher))
     if andere:
         print("  Sonstige Buchungen: " + ", ".join("%s %+.2f" % (k, v) for k, v in andere.items()))
     if ohne:
-        print("  %d Buchungen ohne passende Position im Zeitraum (Position vor dem Zeitraum eroeffnet): Summe %+.2f" % (
+        print("  %d Buchungen ohne passende Position: Summe %+.2f" % (
             len(ohne), sum(b for _, b, _ in ohne)))
 
     # ---- je Tag -----------------------------------------------------------------------
     je_tag = defaultdict(lambda: [0, 0.0, 0, 0])
-    for tt, betrag, _ in trades:
+    for tt, betrag, _, _ in trades:
         e = je_tag[lokal(tt).date()]
         e[0] += 1
         e[1] += betrag
     for p in positionen:
-        je_tag[lokal(p["open"]).date()][2] += 1
+        if p["open"] is not None:
+            je_tag[lokal(p["open"]).date()][2] += 1
         if p["close"] is not None and p["grund"] == "SL":
             je_tag[lokal(p["close"]).date()][3] += 1
-    print("\n  JE TAG (Ortszeit)        Buchungen   Summe EUR   Positionen eroeffnet   davon spaeter per Stop Loss zu")
+    print("\n  JE TAG (Ortszeit)        Buchungen   Summe EUR   Positionen eroeffnet   per Stop Loss geschlossen")
     for tag in sorted(je_tag):
         e = je_tag[tag]
         print("    %s %s  %10d  %+10.2f  %21d  %10d" % (WOCHENTAG[tag.weekday()], tag.strftime("%d.%m."), e[0], e[1], e[2], e[3]))
 
     # ---- je Symbol --------------------------------------------------------------------
     je_sym = defaultdict(lambda: [0, 0.0, 0, 0, 0])
-    for _, betrag, epic in trades:
+    for _, betrag, epic, _ in trades:
         je_sym[epic][0] += 1
         je_sym[epic][1] += betrag
     for p in zu:
@@ -668,19 +709,21 @@ def teil2(env, days):
                   sorted(((g, [p for p in zu if p["grund"] == g]) for g in set(p["grund"] for p in zu)), key=lambda x: -len(x[1]))]
     print("\n  WODURCH WURDE DER REST DER POSITION GESCHLOSSEN?")
     for g, ps in sorted(nach_grund.items(), key=lambda x: -len(x[1])):
-        halten = sum((p["close"] - p["open"]).total_seconds() for p in ps) / len(ps)
+        mit = [p for p in ps if p["open"] is not None]
+        halten = dauer(sum((p["close"] - p["open"]).total_seconds() for p in mit) / len(mit)) if mit else "-"
         print("    %-44s %3d Positionen | Summe %+7.2f | Schnitt %+6.2f | mittlere Haltedauer %s" % (
-            g, len(ps), sum(p["summe"] for p in ps), sum(p["summe"] for p in ps) / len(ps), dauer(halten)))
+            g, len(ps), sum(p["summe"] for p in ps), sum(p["summe"] for p in ps) / len(ps), halten))
 
     # ---- Liste der Positionen ---------------------------------------------------------
     print("\n  POSITIONEN (letzte %d von %d; Zeiten in Ortszeit)" % (min(40, len(positionen)), len(positionen)))
-    print("    eroeffnet     Symbol         Richt.  Groesse    Einstieg    Teilverk.  geschlossen      durch   Haltedauer   Ergebnis EUR")
+    print("    eroeffnet     Symbol         Richt.  Groesse    Einstieg    Teilverk.  geschlossen      durch   Haltedauer   Ergebnis EUR   (davor = vor dem Zeitraum eroeffnet)")
     for p in positionen[-40:]:
-        print("    %s  %-14s %-5s %9g  %10g  %9d  %-15s  %-6s  %-11s  %s" % (
-            lokal(p["open"]).strftime("%d.%m. %H:%M"), p["epic"][:14], p["dir"], p["groesse"], p["einstieg"],
+        print("    %-12s  %-14s %-5s %9s  %10g  %9d  %-15s  %-6s  %-11s  %s" % (
+            lokal(p["open"]).strftime("%d.%m. %H:%M") if p["open"] else "davor", p["epic"][:14], p["dir"],
+            ("%g" % p["groesse"]) if p["groesse"] is not None else "?", p["einstieg"],
             max(0, p["teile"] - (1 if p["close"] else 0)),
             lokal(p["close"]).strftime("%d.%m. %H:%M") if p["close"] else "noch offen",
-            p["grund"] or "-", dauer((p["close"] - p["open"]).total_seconds()) if p["close"] else "-",
+            p["grund"] or "-", dauer((p["close"] - p["open"]).total_seconds()) if p["close"] and p["open"] else "-",
             ("%+.2f (%d Buch.)" % (p["summe"], p["buchungen"])) if p["buchungen"]
             else ("keine Buchung gefunden" if p["close"] else "-")))
 
@@ -696,7 +739,7 @@ def teil2(env, days):
     for epic, ps in je_epic.items():
         for i in range(1, len(ps)):
             vor, neu = ps[i - 1], ps[i]
-            if vor["close"] is not None and neu["dir"] == vor["dir"]:
+            if vor["close"] is not None and neu["open"] is not None and neu["dir"] == vor["dir"]:
                 luecke = (neu["open"] - vor["close"]).total_seconds()
                 if luecke < 24 * 3600:
                     wieder.append((neu["open"], epic, neu["dir"], luecke, vor["grund"]))
@@ -708,6 +751,21 @@ def teil2(env, days):
         print("    %s  %-14s %-4s  %s nach der Schliessung (durch %s)%s" % (
             lokal(t).strftime("%d.%m. %H:%M"), epic[:14], richtung, dauer(luecke), grund,
             "   <-- kuerzer als die Sperre" if sperre > 0 and luecke < sperre * 3600 else ""))
+
+    # ---- Drehen: ist die Gegenposition wirklich entstanden? --------------------------
+    if K.get("exits"):
+        print("\n  DREHEN laut Log: %d   (der Bot prueft die Gegenposition nicht nach - hier der Abgleich mit Capital.com)" % len(K["exits"]))
+        entstanden = 0
+        for ts, sym, von, nach in K["exits"][-15:]:
+            epic = epic_von(sym, K.get("bot_dir", "."))
+            zu_ok = any(q["epic"] == epic and q["dir"] == von and any(abs((lokal(ab) - ts).total_seconds()) <= 180 for ab, _ in q["abbau"])
+                        for q in positionen)
+            neu_ok = any(q["epic"] == epic and q["dir"] == nach and q["open"] is not None
+                         and -10 <= (lokal(q["open"]) - ts).total_seconds() <= 180 for q in positionen)
+            entstanden += 1 if neu_ok else 0
+            print("    %s  %-12s %s->%s | alte Position verkleinert/geschlossen: %-4s | Gegenposition entstanden: %s" % (
+                ts.strftime("%d.%m. %H:%M"), sym[:12], von, nach, "ja" if zu_ok else "NEIN", "ja" if neu_ok else "NEIN"))
+        K["drehen"] = (len(K["exits"][-15:]), entstanden)
 
     # ---- Rohdaten zum Nachpruefen -----------------------------------------------------
     roh = [a for a in akt if a.get("type") == "POSITION"][-4:]
@@ -751,10 +809,10 @@ TEXTE = {
            "kz": "{0}: {1} · Quote {2:.0f} % · Ø {3:+.2f} / {4:+.2f} · Faktor {5} · Summe {6:+.2f}", "noetig": "Nötige Quote für ±0: {0:.0f} %",
            "grund": "Geschlossen durch", "SL": "Stop Loss", "TP": "Take Profit", "USER": "Bot/Hand", "broker": "Broker",
            "wieder": "Wiedereinstiege in 24 h: {0}, davon kürzer als die Sperre ({2:g} h): {1}",
-           "heute": "Heute im Log", "orders": "Orders", "nicht_best": "nicht bestätigt", "abgelehnt": "abgelehnt", "sl_gesch": "Stop geschoben",
+           "heute": "Letzte 24 h im Log", "orders": "Orders", "nicht_best": "nicht bestätigt", "abgelehnt": "abgelehnt", "sl_gesch": "Stop geschoben",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "Drehen", "sperren": "Sperren ({0} Tage)", "s_wieder": "Wiedereinstieg",
            "s_max": "Max. Positionen", "s_verlust": "Verluste", "s_spread": "Spread", "s_dd": "Tages-Stopp",
-           "ki": "KI ({0} Tage): Gemini {1} · Ersatz {2}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
+           "dreh2": "Drehen: {0} · Gegenposition entstanden: {1}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
            "kein_log": "Kein Log im Zeitraum.", "kein_api": "Capital.com: keine Daten.", "api_fehler": "Capital.com: {0} Abfragen fehlgeschlagen.",
            "keine": "keine"},
     "en": {"kopf": "🔎 NEXUS diagnosis · {0} days", "stand": "Version: {0}", "dienst": "Service: {0}, restarts: {1}", "sprache": "Language: {0}",
@@ -764,10 +822,10 @@ TEXTE = {
            "kz": "{0}: {1} · win rate {2:.0f}% · avg {3:+.2f} / {4:+.2f} · factor {5} · total {6:+.2f}", "noetig": "Win rate needed to break even: {0:.0f}%",
            "grund": "Closed by", "SL": "Stop Loss", "TP": "Take Profit", "USER": "bot/manual", "broker": "broker",
            "wieder": "Re-entries within 24 h: {0}, of which shorter than the lock ({2:g} h): {1}",
-           "heute": "Today in the log", "orders": "orders", "nicht_best": "not verified", "abgelehnt": "rejected", "sl_gesch": "stop moved",
+           "heute": "Last 24 h in the log", "orders": "orders", "nicht_best": "not verified", "abgelehnt": "rejected", "sl_gesch": "stop moved",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "reversals", "sperren": "Blocks ({0} days)", "s_wieder": "re-entry",
            "s_max": "max positions", "s_verlust": "losses", "s_spread": "spread", "s_dd": "daily stop",
-           "ki": "AI ({0} days): Gemini {1} · fallback {2}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
+           "dreh2": "Reversals: {0} · opposite position created: {1}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
            "kein_log": "No log in this period.", "kein_api": "Capital.com: no data.", "api_fehler": "Capital.com: {0} requests failed.",
            "keine": "none"},
     "tr": {"kopf": "🔎 NEXUS teşhisi · {0} gün", "stand": "Sürüm: {0}", "dienst": "Servis: {0}, yeniden başlatma: {1}", "sprache": "Dil: {0}",
@@ -777,10 +835,10 @@ TEXTE = {
            "kz": "{0}: {1} · kazanma %{2:.0f} · ort. {3:+.2f} / {4:+.2f} · faktör {5} · toplam {6:+.2f}", "noetig": "Başabaş için gereken oran: %{0:.0f}",
            "grund": "Kapatan", "SL": "Stop Loss", "TP": "Take Profit", "USER": "bot/elle", "broker": "aracı kurum",
            "wieder": "24 saat içinde yeniden giriş: {0}, kilitten ({2:g} sa) kısa olan: {1}",
-           "heute": "Bugün log'da", "orders": "emir", "nicht_best": "doğrulanamadı", "abgelehnt": "reddedildi", "sl_gesch": "stop kaydırıldı",
+           "heute": "Son 24 saat log'da", "orders": "emir", "nicht_best": "doğrulanamadı", "abgelehnt": "reddedildi", "sl_gesch": "stop kaydırıldı",
            "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "yön değiştirme", "sperren": "Engeller ({0} gün)", "s_wieder": "yeniden giriş",
            "s_max": "maks. pozisyon", "s_verlust": "kayıp", "s_spread": "spread", "s_dd": "günlük durdurma",
-           "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek {2}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
+           "dreh2": "Yön değiştirme: {0} · karşı pozisyon oluştu: {1}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
            "kein_log": "Bu dönemde log yok.", "kein_api": "Capital.com: veri yok.", "api_fehler": "Capital.com: {0} sorgu başarısız.",
            "keine": "yok"},
 }
@@ -823,6 +881,8 @@ def kurzfassung(lang, days, mit_api):
                                                      for g, n, summe in K["grund"]))
         if "wieder" in K:
             z.append(T["wieder"].format(*K["wieder"]))
+        if "drehen" in K:
+            z.append(T["dreh2"].format(*K["drehen"]))
     if "alle" in K:
         h, a = K["heute"], K["alle"]
         z.append("%s: %s %d · %s %d · %s %d · %s %d · %s %d · %s %d/%d/%d · %s %d" % (
@@ -835,7 +895,8 @@ def kurzfassung(lang, days, mit_api):
             T["sperren"].format(days), T["s_wieder"], a.get("Sperre: Wiedereinstieg", 0), T["s_max"], a.get("Sperre: maximale Positionen", 0),
             T["s_verlust"], a.get("Sperre: Verluste des Tages", 0), T["s_spread"], a.get("Sperre: Spread", 0),
             T["s_dd"], a.get("Sperre: Tages-Verlust-Stopp", 0)))
-        z.append(T["ki"].format(days, a.get("KI: Gemini hat geantwortet", 0), a.get("Ersatzbetrieb im Scan", 0)))
+        z.append(T["ki"].format(days, a.get("KI: Gemini hat geantwortet", 0), a.get("Ersatzbetrieb im Scan", 0),
+                                a.get("KI: alle Ersatz-Anbieter ausgefallen", 0)))
         z.append(T["fehler"].format(K.get("fehler", 0), K.get("miss", 0)))
     else:
         z.append(T["kein_log"])
@@ -869,6 +930,7 @@ def main():
     print("NEXUS-Diagnose %s | %s | Ordner: %s" % (VERSION, datetime.now().strftime("%Y-%m-%d %H:%M"), bot_dir))
     print("Nur lesend. Schluessel, Passwoerter und Token werden nicht ausgegeben.")
     env, doppelt = read_env(bot_dir / ".env")
+    K["bot_dir"] = str(bot_dir)
     sicher("Teil 0", teil0, bot_dir, env, doppelt)
     sicher("Teil 1", teil1, bot_dir, days)
     if not a.no_api:
