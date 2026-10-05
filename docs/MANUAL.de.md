@@ -1,6 +1,6 @@
-# NEXUS CEO – Betriebsanleitung (v15.19)
+# NEXUS CEO – Betriebsanleitung (v15.20)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.19 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.20 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
 
 Andere Sprachen: [English](MANUAL.en.md) · [Türkçe](MANUAL.tr.md)
 
@@ -8,7 +8,7 @@ Andere Sprachen: [English](MANUAL.en.md) · [Türkçe](MANUAL.tr.md)
 
 Du brauchst einen Rechner, der dauernd läuft (zum Beispiel einen Raspberry Pi), Python 3.10 oder neuer (getestet mit 3.11), ein Capital.com-Konto und einen eigenen Telegram-Bot.
 
-1. Dateien in einen Ordner legen, zum Beispiel `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `requirements.txt`, `.env.example`. Freiwillig dazu: `capital_markets_config.py` mit der Liste deiner Märkte. Fehlt sie, handelt der Bot eine eingebaute Liste mit neun Märkten (EUR/USD, Gold, Silber, Crude, Brent, BTC, ETH, XRP, SOL).
+1. Dateien in einen Ordner legen, zum Beispiel `~/nexus/`: `nexus_ceo.py`, `nexus_lang.py`, `nexus_diagnose.py`, `requirements.txt`, `.env.example`. Freiwillig dazu: `capital_markets_config.py` mit der Liste deiner Märkte. Fehlt sie, handelt der Bot eine eingebaute Liste mit neun Märkten (EUR/USD, Gold, Silber, Crude, Brent, BTC, ETH, XRP, SOL).
 2. Python-Pakete installieren: `pip install -r requirements.txt`
 3. Telegram-Bot anlegen: in Telegram mit `@BotFather` schreiben, `/newbot` senden, den Token aufheben.
 4. Capital.com: im Konto unter den Einstellungen einen API-Key erzeugen. Dabei vergibst du ein eigenes Passwort für den Key. In die `.env` gehören der Key (`CAPITAL_API_KEY`), deine Anmelde-E-Mail (`CAPITAL_IDENTIFIER`) und das Passwort (`CAPITAL_PASSWORD`). Welches Passwort Capital.com hier erwartet (das des Keys oder das des Kontos), steht in der API-Anleitung von Capital.com; lehnt der Bot die Anmeldung ab, das andere versuchen. Für den Anfang das Demo-Konto verwenden.
@@ -68,6 +68,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | `/sperren` | 🔒 Sperren | Aktive Handelssperren |
 | `/volatilitaet` | – | Schwarzer-Schwan-Prüfung jetzt ausführen |
 | `/update_models` | – | Gemini-Modellliste neu holen; zeigt die Kette und die von Google abgelehnten Keys |
+| `/diagnose` | 🔎 Diagnose | Diagnose der letzten 7 Tage: Kurzfassung als Nachricht, ganzer Bericht als Textdatei. `/diagnose 3` = nur 3 Tage. Nur lesend |
 | `/sprache` | – | Sprache wählen |
 | `/hilfe` | 📋 Menü | Befehlsübersicht |
 
@@ -389,6 +390,7 @@ Die Merker-Dateien schreibt der Bot selbst; bearbeite sie nicht von Hand, solang
 | --- | --- | --- |
 | `nexus_ceo.py` | Das Programm | Nein |
 | `nexus_lang.py` | Texte in Deutsch, Englisch, Türkisch | Nein; ohne sie sendet der Bot die Originaltexte |
+| `nexus_diagnose.py` | Diagnose-Skript, nur lesend. Läuft über `/diagnose` oder im Terminal mit `python3 nexus_diagnose.py` | Ja; `/diagnose` meldet dann, dass die Datei fehlt |
 | `.env` | Einstellungen und Zugangsdaten | Nein |
 | `capital_markets_config.py` | Symbole, Epics, Mindestgrößen, Spreads (freiwillig) | Ja; der Bot handelt dann die eingebaute Liste mit neun Märkten |
 | `nexus_ceo.log` | Log. Wechselt um Mitternacht, 7 Tage bleiben erhalten | Ja, alte Tage |
@@ -407,7 +409,7 @@ Drei Listen lädt der Bot bei Bedarf aus dem öffentlichen Repository `KhungFu/k
 
 ## 13. Update und Rollback
 
-Ein Update besteht aus `nexus_ceo.py` und `nexus_lang.py`. Beide gehören zusammen.
+Ein Update besteht aus `nexus_ceo.py`, `nexus_lang.py` und `nexus_diagnose.py`. Die drei gehören zusammen; die Befehle unten gelten für jede der Dateien.
 
 ```bash
 cp nexus_ceo.py nexus_ceo.py.bak

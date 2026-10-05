@@ -27,6 +27,7 @@ Full instructions, all commands, every setting and the known limits are in the m
 | --- | --- |
 | `nexus_ceo.py` | The bot |
 | `nexus_lang.py` | All Telegram texts in German, English and Turkish |
+| `nexus_diagnose.py` | Read-only diagnosis: version, settings, log, results per position. Send `/diagnosis` in Telegram or run `python3 nexus_diagnose.py` |
 | `.env.example` | Template for your settings. Copy it to `.env` |
 | `requirements.txt` | Python packages |
 | `systemd/nexus_ceo.service.example` | Template for running the bot as a service |

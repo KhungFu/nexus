@@ -27,6 +27,7 @@ Die vollständige Anleitung mit allen Befehlen, Einstellungen und bekannten Gren
 | --- | --- |
 | `nexus_ceo.py` | Der Bot |
 | `nexus_lang.py` | Alle Telegram-Texte in Deutsch, Englisch und Türkisch |
+| `nexus_diagnose.py` | Diagnose, nur lesend: Stand, Einstellungen, Log, Ergebnis je Position. In Telegram `/diagnose` senden oder `python3 nexus_diagnose.py` starten |
 | `.env.example` | Vorlage für deine Einstellungen. Nach `.env` kopieren |
 | `requirements.txt` | Python-Pakete |
 | `systemd/nexus_ceo.service.example` | Vorlage, um den Bot als Dienst zu betreiben |
