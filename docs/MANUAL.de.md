@@ -1,6 +1,6 @@
-# NEXUS CEO – Betriebsanleitung (v15.20)
+# NEXUS CEO – Betriebsanleitung (v15.21)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.20 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.21 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
 
 Andere Sprachen: [English](MANUAL.en.md) · [Türkçe](MANUAL.tr.md)
 
@@ -118,19 +118,17 @@ Die Signale für Rohstoffe kommen aus Tageskerzen. Sie ändern sich im Lauf eine
 ### Was bei einer schon offenen Position passiert
 
 - **Gleiche Richtung:** Der Bot stockt nur auf, wenn die Position mindestens 2 % im Gewinn ist (Pyramiding). Sonst steht im Protokoll „… Pyramiding übersprungen: …“.
-- **Gegenrichtung (Drehen):** Kommt im Scan eine TRADE-Zeile, deren Richtung der offenen Position widerspricht (Position BUY, Zeile SELL oder umgekehrt), schließt der Bot alle Positionen dieses Symbols und eröffnet sofort die Gegenposition.
+- **Gegenrichtung:** Kommt im Scan eine TRADE-Zeile, deren Richtung der offenen Position widerspricht (Position BUY, Zeile SELL oder umgekehrt), schließt der Bot alle Positionen dieses Symbols. Eine Gegenposition eröffnet er nicht.
 
-So läuft das Drehen ab:
+So läuft das ab:
 
-1. Die Zeile muss durch die Sperren aus Abschnitt 8: Tages-Verlust-Stopp, weniger als `MAX_POSITIONEN` offene Positionen, Markt offen, Spread, Verlust-Sperre. Die Wiedereinstiegs-Sperre und die 2-%-Regel gelten beim Drehen nicht.
-2. Der Bot schließt alle Positionen des Symbols. Jede, die im Minus war, zählt als Verlust für die Verlust-Sperre.
-3. Die Größe rechnet er neu aus der `.env`, wie bei einer ersten Position.
-4. Der Stop kommt von der KI und wird auf den Mindestabstand geschoben. Das Ziel kommt unverändert von der KI.
-5. Er schickt die Markt-Order und meldet „… Gegenposition eröffnet (…) Stufe 1/4“.
+1. Die Zeile muss durch die Sperren aus Abschnitt 8: Tages-Verlust-Stopp, weniger als `MAX_POSITIONEN` offene Positionen, Markt offen, Spread, Verlust-Sperre.
+2. Der Bot schließt alle Positionen des Symbols. Jede geschlossene Position, die im Minus war, zählt als Verlust für die Verlust-Sperre.
+3. Im Protokoll steht „↩️ …: Gegensignal …->… - nur geschlossen, keine Gegenposition“. Schlägt das Schließen fehl, steht dort der Grund.
 
-Beim Drehen fehlen vier Prüfungen, die eine normale Eröffnung hat: ob Stop und Ziel auf der richtigen Seite des Kurses liegen, die Margin-Prüfung, das Ersatz-Ziel und die Bestätigung nach 8 Sekunden. Der Bot meldet die Gegenposition, sobald Capital.com die Order annimmt. Sieh nach einer solchen Meldung mit `/position` nach, ob die Position wirklich da ist.
+Bleibt das Gegensignal bestehen, eröffnet der nächste Scan die neue Richtung als normale Position, mit allen Prüfungen. Bis v15.20 schickte der Bot sofort eine Gegen-Order ohne diese Prüfungen.
 
-Gedreht wird nur im Scan. Der Exit-Monitor schließt nur und eröffnet nichts.
+Auf ein Gegensignal reagiert nur der Scan. Der Exit-Monitor schließt nach seinen eigenen Regeln.
 
 ### Was daneben ständig läuft
 
@@ -473,11 +471,10 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 - **Halbierung nur für vier Coins.** Halbiert wird bei BTC, ETH, SOL und XRP. Andere Coins laufen mit voller Größe.
 - **Zwölf Coins gelten nicht als Krypto.** Der Bot erkennt Krypto an einer festen Namensliste. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX und XTZ aus der mitgelieferten Marktliste stehen nicht darauf. Für sie gelten die Regeln für Rohstoffe: 4 von 5 Gremium-Stimmen und kein Handel am Wochenende.
 - **Korrelation wird nicht geprüft.** Verwandte Märkte wie Crude, Heating Oil und Gasoline gelten als unabhängige Positionen.
-- **Ab 5 Positionen kein Drehen.** Bei 5 oder mehr offenen Positionen bricht der Bot vor jeder Prüfung ab, auch wenn ein Signal eine bestehende Position drehen würde.
+- **Ab 5 Positionen wirkt kein Gegensignal.** Bei 5 oder mehr offenen Positionen bricht der Bot vor jeder Prüfung ab. Ein Gegensignal schließt dann auch keine bestehende Position.
 - **Statistik und Tagesziel aus der Bot-Datenbank sind unvollständig.** Die Datenbank kennt nur Schließungen, die der Bot selbst ausgelöst hat. Maßgeblich ist die Auswertung in der Capital-App.
 - **Der manuelle Trade** nutzt weder den Rausch-Schutz noch `MAX_POSITION_EUR`.
 - **Handelssperre per Text wirkt nicht.** Die Tabelle, die Wörter wie „gold“ einem Symbol zuordnet, wird weiter unten im Code von einer zweiten Tabelle gleichen Namens (`ASSET_KEYWORDS`, für die Nachrichten) überschrieben. Der Bot erkennt deshalb in keinem Satz ein Symbol und setzt nie eine Sperre. Der Fehler ist absichtlich nicht behoben: Mit der Reparatur würde ein Satz mit „sell“, „close“, „verkaufen“ oder „kapat“ und einem Symbolnamen sofort die Positionen dieses Symbols schließen.
-- **Drehen ohne Nachprüfung.** Siehe Abschnitt 5.
 - **Sperren aus dem Wochen-Lernlauf** greifen nur bei Symbolen ohne Unterstrich im Namen.
 
 ### Grenzen der Schutzfunktionen

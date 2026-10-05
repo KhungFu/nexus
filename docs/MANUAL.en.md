@@ -1,6 +1,6 @@
-# NEXUS CEO – Operating Manual (v15.20)
+# NEXUS CEO – Operating Manual (v15.21)
 
-NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.20 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
+NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.21 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
 
 Other languages: [Deutsch](MANUAL.de.md) · [Türkçe](MANUAL.tr.md)
 
@@ -118,19 +118,17 @@ The signals for commodities come from daily candles. They hardly change during a
 ### What happens when a position is already open
 
 - **Same direction:** The bot only adds to the position if it is at least 2% in profit (Pyramiding). Otherwise the scan report shows “… Pyramiding skipped: …”.
-- **Opposite direction (reversing):** If a scan produces a TRADE line whose direction contradicts the open position (position BUY, line SELL, or the other way round), the bot closes all positions of this symbol and immediately opens the opposite position.
+- **Opposite direction:** If a scan produces a TRADE line whose direction contradicts the open position (position BUY, line SELL or the reverse), the bot closes all positions of this symbol. It does not open an opposite position.
 
-This is how reversing works:
+This is how it works:
 
-1. The line has to pass the locks from section 8: daily loss stop, fewer than `MAX_POSITIONEN` open positions, market open, spread, loss lock. The re-entry lock and the 2% rule do not apply when reversing.
-2. The bot closes all positions of the symbol. Each one that was at a loss counts as a loss for the loss lock.
-3. It calculates the size afresh from the `.env`, as for a first position.
-4. The stop comes from the AI and is moved to the minimum distance. The target comes from the AI unchanged.
-5. It sends the market order and reports “… counter-position opened (…) Level 1/4”.
+1. The line has to pass the locks from section 8: daily loss stop, fewer than `MAX_POSITIONEN` open positions, market open, spread, loss lock.
+2. The bot closes all positions of the symbol. Each closed position that was at a loss counts as a loss for the loss lock.
+3. The scan report shows “↩️ …: opposite signal …->… - closed only, no opposite position”. If closing fails, the report gives the reason.
 
-Reversing lacks four checks that a normal opening has: whether stop and target are on the correct side of the price, the margin check, the fallback target and the confirmation after 8 seconds. The bot reports the opposite position as soon as Capital.com accepts the order. After such a message, check with `/position` whether the position is really there.
+If the opposite signal persists, the next scan opens the new direction as a normal position, with all checks. Up to v15.20 the bot sent an opposite order at once, without these checks.
 
-Reversing happens only in the scan. The exit monitor only closes and opens nothing.
+Only the scan reacts to an opposite signal. The exit monitor closes by its own rules.
 
 ### What runs constantly alongside
 
@@ -473,11 +471,10 @@ The log stays in the original language (German and Turkish mixed); only the Tele
 - **Halving for four coins only.** The amount is halved for BTC, ETH, SOL and XRP. Other coins run at full size.
 - **Twelve coins do not count as crypto.** The bot recognizes crypto by a fixed list of names. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX and XTZ from the supplied market list are not on it. They follow the commodity rules: 4 of 5 committee votes and no trading at the weekend.
 - **Correlation is not checked.** Related markets such as Crude, Heating Oil and Gasoline count as independent positions.
-- **No reversing from 5 positions.** With 5 or more open positions the bot aborts before any check, even if a signal would reverse an existing position.
+- **No opposite signal from 5 positions.** With 5 or more open positions the bot aborts before any check. An opposite signal then does not close an existing position either.
 - **Statistics and daily target from the bot database are incomplete.** The database only knows closes that the bot triggered itself. The evaluation in the Capital app is authoritative.
 - **The manual trade** uses neither the noise protection nor `MAX_POSITION_EUR`.
 - **Trading block by text has no effect.** The table that maps words like “gold” to a symbol is overwritten further down in the code by a second table of the same name (`ASSET_KEYWORDS`, for the news). The bot therefore recognizes no symbol in any sentence and never sets a block. The bug is deliberately not fixed: with the fix, a sentence containing “sell”, “close”, “verkaufen” or “kapat” and a symbol name would immediately close the positions of that symbol.
-- **Reversing without a follow-up check.** See section 5.
 - **Blocks from the weekly learning run** only apply to symbols without an underscore in the name.
 
 ### Limits of the protection functions

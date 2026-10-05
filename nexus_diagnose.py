@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NEXUS - Diagnose fuer v15.16 bis v15.20   (NUR LESEND)
+NEXUS - Diagnose fuer v15.16 bis v15.21   (NUR LESEND)
 
 Das Skript aendert nichts: Es liest nexus_ceo.py, die .env, die Logdateien und holt
 von Capital.com nur Daten ab (GET). Es eroeffnet, aendert und schliesst keine Position.
@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "4 (fuer NEXUS v15.20)"
+VERSION = "5 (fuer NEXUS v15.21)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -60,7 +60,7 @@ EREIGNISSE = [
     ("Order eroeffnet und bestaetigt", re.compile(r"Post-Order Verify \S+: OK")),
     ("Order gesendet, Position NICHT gefunden", re.compile(r"Post-Order Verify \S+: NICHT")),
     ("Order abgelehnt", "Trade Fehler"),
-    ("Drehen (Gegenrichtung)", re.compile(r"EXIT: \S+ (BUY|SELL)->(BUY|SELL)")),
+    ("Gegensignal (EXIT)", re.compile(r"EXIT: \S+ (BUY|SELL)->(BUY|SELL)")),
     ("Stop auf Mindestabstand geschoben", re.compile(r"SL (düzeltildi|güncellendi)")),
     ("Breakeven gesetzt", "Breakeven-SL:"),
     ("Mirror-TP Stufe 1", "MIRROR-TP L1"),
@@ -274,7 +274,7 @@ def teil1(bot_dir, days):
     cnt_all, cnt_heute, cnt_gestern, cnt_24 = Counter(), Counter(), Counter(), Counter()
     letzte = defaultdict(list)
     gem_art, sl_mult = Counter(), Counter()
-    fehler, schliess = Counter(), []
+    fehler, schliess, ergebnisse = Counter(), [], []
     fehler_bsp = {}
     anbieter, exits = defaultdict(Counter), []
     erste, letzte_ts, zeilen = None, None, 0
@@ -319,6 +319,8 @@ def teil1(bot_dir, days):
                     m = re.search(r"minimum mesafe: ([\d.]+) × Tagesspanne", line)
                     if m:
                         sl_mult[m.group(1)] += 1
+                    if "Trade-Ergebnis: " in line:
+                        ergebnisse.append((ts, line.split("Trade-Ergebnis: ", 1)[1].rstrip()))
                     if "Schliess-Melder: " in line and ("GESCHLOSSEN" in line or "Geschlossen" in line):
                         schliess.append((ts, line.split("Schliess-Melder: ", 1)[1].rstrip()))
                     if " ERROR " in line or line.startswith("ERROR:") or "Traceback" in line:
@@ -362,7 +364,7 @@ def teil1(bot_dir, days):
         print("  Stop-Korrekturen nach Faktor (SL_ATR_MULT zum Zeitpunkt): " +
               ", ".join("%s x Tagesspanne: %d" % (k, n) for k, n in sorted(sl_mult.items())))
 
-    for name in ("Order gesendet, Position NICHT gefunden", "Order abgelehnt", "Drehen (Gegenrichtung)",
+    for name in ("Order gesendet, Position NICHT gefunden", "Order abgelehnt", "Gegensignal (EXIT)",
                  "Sperre: Wiedereinstieg", "Sperre: maximale Positionen", "Trailing-Stop wirklich nachgezogen",
                  "Warnung im Stop-Lauf (Trailing SL epic)", "Schwarzer Schwan"):
         if letzte.get(name):
@@ -381,6 +383,13 @@ def teil1(bot_dir, days):
         print("    nach Grund: " + ", ".join("%s: %d" % (g, n) for g, n in grund.most_common()))
     else:
         print("\n  Schliess-Melder: keine Meldung im Zeitraum")
+
+    if ergebnisse:
+        print("\n  --- Scan-Ergebnisse laut Log (ab v15.21), letzte %d von %d ---" % (min(25, len(ergebnisse)), len(ergebnisse)))
+        for ts, text in ergebnisse[-25:]:
+            print("    %s  %s" % (ts.strftime("%d.%m. %H:%M"), mask(text)[:170]))
+    else:
+        print("\n  Scan-Ergebnisse: keine Zeile 'Trade-Ergebnis' im Zeitraum (der Bot schreibt sie ab v15.21)")
 
     print("\n  --- Fehler im Log: %d Zeilen, %d verschiedene ---" % (sum(fehler.values()), len(fehler)))
     for norm, n in fehler.most_common(10):
@@ -754,8 +763,8 @@ def teil2(env, days):
 
     # ---- Drehen: ist die Gegenposition wirklich entstanden? --------------------------
     if K.get("exits"):
-        print("\n  DREHEN laut Log: %d   (der Bot prueft die Gegenposition nicht nach - hier der Abgleich mit Capital.com)" % len(K["exits"]))
-        entstanden = 0
+        print("\n  GEGENSIGNALE laut Log: %d   (ab v15.21 schliesst der Bot nur; davor schickte er eine ungepruefte Gegen-Order)" % len(K["exits"]))
+        entstanden, geschl = 0, 0
         for ts, sym, von, nach in K["exits"][-15:]:
             epic = epic_von(sym, K.get("bot_dir", "."))
             zu_ok = any(q["epic"] == epic and q["dir"] == von and any(abs((lokal(ab) - ts).total_seconds()) <= 180 for ab, _ in q["abbau"])
@@ -763,9 +772,10 @@ def teil2(env, days):
             neu_ok = any(q["epic"] == epic and q["dir"] == nach and q["open"] is not None
                          and -10 <= (lokal(q["open"]) - ts).total_seconds() <= 180 for q in positionen)
             entstanden += 1 if neu_ok else 0
+            geschl += 1 if zu_ok else 0
             print("    %s  %-12s %s->%s | alte Position verkleinert/geschlossen: %-4s | Gegenposition entstanden: %s" % (
                 ts.strftime("%d.%m. %H:%M"), sym[:12], von, nach, "ja" if zu_ok else "NEIN", "ja" if neu_ok else "NEIN"))
-        K["drehen"] = (len(K["exits"][-15:]), entstanden)
+        K["drehen"] = (len(K["exits"][-15:]), geschl, entstanden)
 
     # ---- Rohdaten zum Nachpruefen -----------------------------------------------------
     roh = [a for a in akt if a.get("type") == "POSITION"][-4:]
@@ -810,9 +820,9 @@ TEXTE = {
            "grund": "Geschlossen durch", "SL": "Stop Loss", "TP": "Take Profit", "USER": "Bot/Hand", "broker": "Broker",
            "wieder": "Wiedereinstiege in 24 h: {0}, davon kürzer als die Sperre ({2:g} h): {1}",
            "heute": "Letzte 24 h im Log", "orders": "Orders", "nicht_best": "nicht bestätigt", "abgelehnt": "abgelehnt", "sl_gesch": "Stop geschoben",
-           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "Drehen", "sperren": "Sperren ({0} Tage)", "s_wieder": "Wiedereinstieg",
+           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "Gegensignale", "sperren": "Sperren ({0} Tage)", "s_wieder": "Wiedereinstieg",
            "s_max": "Max. Positionen", "s_verlust": "Verluste", "s_spread": "Spread", "s_dd": "Tages-Stopp",
-           "dreh2": "Drehen: {0} · Gegenposition entstanden: {1}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
+           "dreh2": "Gegensignale: {0} · Position geschlossen: {1} · Gegenposition entstanden: {2}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
            "kein_log": "Kein Log im Zeitraum.", "kein_api": "Capital.com: keine Daten.", "api_fehler": "Capital.com: {0} Abfragen fehlgeschlagen.",
            "keine": "keine"},
     "en": {"kopf": "🔎 NEXUS diagnosis · {0} days", "stand": "Version: {0}", "dienst": "Service: {0}, restarts: {1}", "sprache": "Language: {0}",
@@ -823,9 +833,9 @@ TEXTE = {
            "grund": "Closed by", "SL": "Stop Loss", "TP": "Take Profit", "USER": "bot/manual", "broker": "broker",
            "wieder": "Re-entries within 24 h: {0}, of which shorter than the lock ({2:g} h): {1}",
            "heute": "Last 24 h in the log", "orders": "orders", "nicht_best": "not verified", "abgelehnt": "rejected", "sl_gesch": "stop moved",
-           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "reversals", "sperren": "Blocks ({0} days)", "s_wieder": "re-entry",
+           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "opposite signals", "sperren": "Blocks ({0} days)", "s_wieder": "re-entry",
            "s_max": "max positions", "s_verlust": "losses", "s_spread": "spread", "s_dd": "daily stop",
-           "dreh2": "Reversals: {0} · opposite position created: {1}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
+           "dreh2": "Opposite signals: {0} · position closed: {1} · opposite position created: {2}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
            "kein_log": "No log in this period.", "kein_api": "Capital.com: no data.", "api_fehler": "Capital.com: {0} requests failed.",
            "keine": "none"},
     "tr": {"kopf": "🔎 NEXUS teşhisi · {0} gün", "stand": "Sürüm: {0}", "dienst": "Servis: {0}, yeniden başlatma: {1}", "sprache": "Dil: {0}",
@@ -836,9 +846,9 @@ TEXTE = {
            "grund": "Kapatan", "SL": "Stop Loss", "TP": "Take Profit", "USER": "bot/elle", "broker": "aracı kurum",
            "wieder": "24 saat içinde yeniden giriş: {0}, kilitten ({2:g} sa) kısa olan: {1}",
            "heute": "Son 24 saat log'da", "orders": "emir", "nicht_best": "doğrulanamadı", "abgelehnt": "reddedildi", "sl_gesch": "stop kaydırıldı",
-           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "yön değiştirme", "sperren": "Engeller ({0} gün)", "s_wieder": "yeniden giriş",
+           "be": "Breakeven", "mtp": "Mirror-TP", "drehen": "karşı sinyal", "sperren": "Engeller ({0} gün)", "s_wieder": "yeniden giriş",
            "s_max": "maks. pozisyon", "s_verlust": "kayıp", "s_spread": "spread", "s_dd": "günlük durdurma",
-           "dreh2": "Yön değiştirme: {0} · karşı pozisyon oluştu: {1}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
+           "dreh2": "Karşı sinyal: {0} · pozisyon kapatıldı: {1} · karşı pozisyon oluştu: {2}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
            "kein_log": "Bu dönemde log yok.", "kein_api": "Capital.com: veri yok.", "api_fehler": "Capital.com: {0} sorgu başarısız.",
            "keine": "yok"},
 }
@@ -890,7 +900,7 @@ def kurzfassung(lang, days, mit_api):
             T["nicht_best"], h.get("Order gesendet, Position NICHT gefunden", 0), T["abgelehnt"], h.get("Order abgelehnt", 0),
             T["sl_gesch"], h.get("Stop auf Mindestabstand geschoben", 0), T["be"], h.get("Breakeven gesetzt", 0),
             T["mtp"], h.get("Mirror-TP Stufe 1", 0), h.get("Mirror-TP Stufe 2", 0), h.get("Mirror-TP Stufe 3", 0),
-            T["drehen"], h.get("Drehen (Gegenrichtung)", 0)))
+            T["drehen"], h.get("Gegensignal (EXIT)", 0)))
         z.append("%s: %s %d · %s %d · %s %d · %s %d · %s %d" % (
             T["sperren"].format(days), T["s_wieder"], a.get("Sperre: Wiedereinstieg", 0), T["s_max"], a.get("Sperre: maximale Positionen", 0),
             T["s_verlust"], a.get("Sperre: Verluste des Tages", 0), T["s_spread"], a.get("Sperre: Spread", 0),
