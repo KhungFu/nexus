@@ -1,6 +1,6 @@
-# NEXUS CEO – Betriebsanleitung (v15.21)
+# NEXUS CEO – Betriebsanleitung (v15.22)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.21 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.22 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
 
 Andere Sprachen: [English](MANUAL.en.md) · [Türkçe](MANUAL.tr.md)
 
@@ -67,7 +67,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | `/verluste` | 💸 Verluste | Verlustzähler von heute je Symbol |
 | `/sperren` | 🔒 Sperren | Aktive Handelssperren |
 | `/volatilitaet` | – | Schwarzer-Schwan-Prüfung jetzt ausführen |
-| `/update_models` | – | Gemini-Modellliste neu holen; zeigt die Kette und die von Google abgelehnten Keys |
+| `/update_models` | – | KI-Modelle prüfen: Gemini-Kette und abgelehnte Keys, dazu Modell, Kette und Sperren von Groq, Qwen und Nvidia. `/update_models best` wechselt auf das größte Modell, das die Prüfung besteht |
 | `/diagnose` | 🔎 Diagnose | Diagnose der letzten 7 Tage: Kurzfassung als Nachricht, ganzer Bericht als Textdatei. `/diagnose 3` = nur 3 Tage. Nur lesend |
 | `/sprache` | – | Sprache wählen |
 | `/hilfe` | 📋 Menü | Befehlsübersicht |
@@ -263,6 +263,23 @@ Die Reihenfolge steht in `PROVIDER_ORDER`. Das lokale Ollama-Modell steuert `OLL
 
 Im Ersatzbetrieb legt die KI nur Stop und Ziel fest oder lehnt einen Kandidaten ab. Symbol und Richtung kommen vom Gate-Keeper, die Größe aus der `.env`, und der Stop wird auf den Mindestabstand geschoben. Die Telegram-Meldung nennt immer „Groq“, auch wenn ein anderer Anbieter geantwortet hat; welcher es war, steht im Log als `[OK] ...`.
 
+### Modelle der Ersatz-Anbieter (ab v15.22)
+
+Groq, OpenRouter und Nvidia nehmen Modelle immer wieder aus dem Programm. Bis v15.21 lief jeder Anbieter mit dem einen Modell aus der `.env` und fiel aus, sobald es das Modell nicht mehr gab. Jetzt hält der Bot die Modelle selbst aktuell, nach demselben Verfahren wie swarm.py:
+
+- **Kette je Anfrage.** Der Bot fragt zuerst das Modell aus der `.env`, danach bis zu drei Ersatzmodelle aus der Modellliste des Anbieters (`AI_CHAIN_MAX`). Bei 401, 403 oder 429 wechselt er den Key; sind alle Keys durch, das Modell. Bei Überlastung oder leerer Antwort wechselt er sofort das Modell.
+- **Totes Modell.** Meldet der Anbieter, dass es das Modell nicht mehr gibt (404, 410, „does not exist“, „No endpoints found“), sperrt der Bot es für 24 Stunden und stößt eine Prüfung an.
+- **Ersatz.** Die Prüfung holt die Modellliste, sortiert Nicht-Chat-Modelle aus und testet die besten Kandidaten mit einem kurzen echten Aufruf. Das erste Modell, das antwortet, wird Hauptmodell: Der Bot schreibt es in die `.env`, benutzt es sofort und meldet den Wechsel in Telegram. Das bisherige Modell fragt er vorher selbst: Er ersetzt es nur, wenn es wirklich nicht mehr antwortet. Bleibt die Prüfung ohne Ergebnis (Limit, Netz), ändert er nichts.
+- **Wann geprüft wird.** 75 Sekunden nach dem Start, danach alle `MODEL_AUTOUPDATE_HOURS` Stunden und fünf Minuten nach einem Ausfall.
+
+Vor dem Schreiben legt der Bot die Sicherung `.env.modelupdate.bak` an. Danach liest er die `.env` zur Kontrolle; stimmt ein Wert nicht, stellt er den alten Inhalt wieder her. Kommentare und alle anderen Zeilen bleiben, wie sie sind.
+
+`/update_models` prüft sofort und zeigt je Anbieter Modell, Kette und gesperrte Modelle. Ein Modell, das antwortet, bleibt dabei stehen. `/update_models best` wechselt zusätzlich auf das größte Modell, das die Prüfung besteht. Mit `MODEL_AUTOUPDATE_PIN=GROQ_MODEL` (auch `QWEN_MODEL`, `NVIDIA_MODEL`, kommagetrennt) fasst der Bot das Modell eines Anbieters nie an.
+
+- **Qwen:** Der Bot nimmt nur Gratis-Modelle von OpenRouter, zuerst die Qwen-Modelle. Besteht keines die Prüfung, springt ein anderes Gratis-Modell ein. Ein bezahltes Modell, das du selbst eingetragen hast, bleibt stehen. Zeigt `QWEN_BASE_URL` nicht auf OpenRouter, wechselt der Bot dort nichts.
+- **Kosten:** Jede Prüfung kostet bei Groq und Nvidia einen kurzen Aufruf, bei einem Wechsel bis zu sechs weitere.
+- **Denk-Text:** Was ein Modell zwischen `<think>` und `</think>` schreibt, entfernt der Bot aus der Antwort.
+
 ## 10. Meldungen verstehen
 
 Die Tabellen nennen den Anfang der Meldung, wie er in dieser Sprache im Chat steht. „…“ steht für Werte wie Symbol, Kurs oder Uhrzeit.
@@ -362,11 +379,13 @@ Die Datei liegt neben `nexus_ceo.py`. Änderungen wirken nach einem Neustart. Ko
 | `GEMINI_MODEL_1` | – | Erstes Modell der Kette |
 | `GEMINI_CHAIN_MAX` | 4 | Höchstzahl Modelle je Anfrage |
 | `GEMINI_503_PAUSE` | 6 | Sekunden bis zum zweiten Versuch bei Überlastung; 0 = keiner |
-| `MODEL_AUTOUPDATE`, `_HOURS`, `_NOTIFY` | true, 6, true | Modellliste automatisch aktualisieren, Abstand in Stunden, Meldung bei Änderung |
+| `MODEL_AUTOUPDATE`, `_HOURS`, `_NOTIFY` | true, 6, true | Modelle selbst aktuell halten (Gemini-Liste und Ersatz-Anbieter), Abstand in Stunden, Meldung bei Änderung |
+| `MODEL_AUTOUPDATE_PIN` | – | Anbieter, deren Modell der Bot nie ersetzt, z. B. `GROQ_MODEL,NVIDIA_MODEL` |
+| `AI_CHAIN_MAX` | 4 | Höchstzahl Modelle je Anfrage bei Groq, Qwen und Nvidia |
 | `PROVIDER_ORDER` | gemini,groq,qwen,nvidia | Reihenfolge der Ersatz-Anbieter |
-| `GROQ_KEYS`, `GROQ_MODEL` | – | Groq |
-| `QWEN_KEYS`, `QWEN_MODEL`, `QWEN_BASE_URL` | – | Qwen über einen OpenAI-kompatiblen Zugang |
-| `NVIDIA_KEYS`, `NVIDIA_MODEL` | – | Nvidia NIM |
+| `GROQ_KEYS`, `GROQ_MODEL` | – | Groq. Das Modell ersetzt der Bot selbst, wenn es wegfällt |
+| `QWEN_KEYS`, `QWEN_MODEL`, `QWEN_BASE_URL` | – | Qwen über einen OpenAI-kompatiblen Zugang. Bei OpenRouter ersetzt der Bot das Modell selbst |
+| `NVIDIA_KEYS`, `NVIDIA_MODEL` | – | Nvidia NIM. Das Modell ersetzt der Bot selbst, wenn es wegfällt |
 | `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_PRIORITY` | localhost, –, last | Lokales Modell; `first`, `last` oder `only` |
 | `SCAN_MELDUNGEN` | neu | `neu` = Scan ohne Trade nur bei Änderung melden; `alle` = bei jedem Scan |
 
@@ -390,6 +409,7 @@ Die Merker-Dateien schreibt der Bot selbst; bearbeite sie nicht von Hand, solang
 | `nexus_lang.py` | Texte in Deutsch, Englisch, Türkisch | Nein; ohne sie sendet der Bot die Originaltexte |
 | `nexus_diagnose.py` | Diagnose-Skript, nur lesend. Läuft über `/diagnose` oder im Terminal mit `python3 nexus_diagnose.py` | Ja; `/diagnose` meldet dann, dass die Datei fehlt |
 | `.env` | Einstellungen und Zugangsdaten | Nein |
+| `.env.modelupdate.bak` | Sicherung der `.env` vor dem letzten automatischen Modellwechsel. Enthält dieselben Zugangsdaten | Ja |
 | `capital_markets_config.py` | Symbole, Epics, Mindestgrößen, Spreads (freiwillig) | Ja; der Bot handelt dann die eingebaute Liste mit neun Märkten |
 | `nexus_ceo.log` | Log. Wechselt um Mitternacht, 7 Tage bleiben erhalten | Ja, alte Tage |
 | `nexus_quant.db` | Datenbank: Nachrichten, deine Notizen, Trades, Statistik | Nein, sonst sind Notizen und Statistik weg |
@@ -438,6 +458,7 @@ Merker-Dateien bleiben bei Updates erhalten. Handelssperren gehen bei jedem Neus
 | Nachrichten kommen in der falschen Sprache oder gemischt | `BOT_LANGUAGE` falsch, `nexus_lang.py` fehlt, oder für einen Text gibt es keine Regel | `/sprache` senden; `nexus_lang_missing.log` ansehen |
 | Der Bot eröffnet nichts | Eine Sperre greift, oder der Gate-Keeper findet keinen Kandidaten | Meldung „🔔 Scan ohne neuen Trade:“ lesen; `/position`, `/verluste`, `/sperren`; am Wochenende nur Krypto |
 | „INFO … \| Gemini-Quota erschöpft → weiter mit Groq“ bei jedem Scan | Keys abgelehnt, Tageslimit erreicht oder zu viele Scans für das Gratis-Kontingent | `/update_models`; abgelehnte Keys ersetzen; Scan-Intervall verlängern |
+| Im Log steht bei jedem Scan `Groq key 1 hata: ...` (oder Qwen, Nvidia) | Modell beim Anbieter abgeschaltet, Key abgelehnt oder Limit erreicht | `/update_models` zeigt Modell, Kette und Sperren; `/diagnose` nennt die häufigste Fehlermeldung je Anbieter |
 | Stufen werden nicht verkauft | Hedging-Modus im Konto an, `MIRROR_TP_ENABLED=false`, oder Stunden-ATR nicht abrufbar | Hedging ausschalten; `.env` prüfen |
 | Positionsbericht zeigt keinen Take Profit | Take Profit fehlt bei Capital.com | In der Capital-App nachtragen |
 | Positionsbericht warnt vor dem Tagesrauschen | Stop liegt näher als der Mindestabstand | `/sl_weiten`, dann `/sl_weiten ja` |
@@ -476,6 +497,7 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 - **Der manuelle Trade** nutzt weder den Rausch-Schutz noch `MAX_POSITION_EUR`.
 - **Handelssperre per Text wirkt nicht.** Die Tabelle, die Wörter wie „gold“ einem Symbol zuordnet, wird weiter unten im Code von einer zweiten Tabelle gleichen Namens (`ASSET_KEYWORDS`, für die Nachrichten) überschrieben. Der Bot erkennt deshalb in keinem Satz ein Symbol und setzt nie eine Sperre. Der Fehler ist absichtlich nicht behoben: Mit der Reparatur würde ein Satz mit „sell“, „close“, „verkaufen“ oder „kapat“ und einem Symbolnamen sofort die Positionen dieses Symbols schließen.
 - **Sperren aus dem Wochen-Lernlauf** greifen nur bei Symbolen ohne Unterstrich im Namen.
+- **Die Rangfolge der Ersatzmodelle** richtet sich nach Größe, Kontextlänge und Alter des Modells, nicht nach der Güte der Analyse. Ein automatisch gewähltes Modell kann schwächer urteilen als das alte. Der Bot meldet jeden Wechsel; das Modell lässt sich in der `.env` wieder festlegen und mit `MODEL_AUTOUPDATE_PIN` halten.
 
 ### Grenzen der Schutzfunktionen
 
@@ -492,4 +514,4 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 
 ### Was geprüft ist
 
-Die Funktionen sind gegen nachgebaute Capital.com-, Telegram- und Gemini-Antworten getestet, nicht gegen ein echtes Live-Konto. Lass den Bot mindestens eine Woche im Demo-Konto laufen, bevor du `CAPITAL_URL` auf die Live-Adresse stellst.
+Die Funktionen sind gegen nachgebaute Capital.com-, Telegram-, Gemini-, Groq-, OpenRouter- und Nvidia-Antworten getestet, nicht gegen ein echtes Live-Konto. Der Modellwechsel der Ersatz-Anbieter ist mit den Fehlermeldungen aus einem echten Log geprüft, aber nicht gegen die echten Modelllisten der Anbieter. Lass den Bot mindestens eine Woche im Demo-Konto laufen, bevor du `CAPITAL_URL` auf die Live-Adresse stellst.

@@ -1,6 +1,6 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.21)
+# NEXUS CEO – Kullanım Kılavuzu (v15.22)
 
-NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.21 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
+NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.22 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
 Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
@@ -67,7 +67,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | `/kayip` | 💸 Kayip | Sembol başına bugünün kayıp sayacı |
 | `/bloklar` | 🔒 Bloklar | Etkin HARD BLOCK'lar (işlem engelleri) |
 | `/volatilite` | – | Kara Kuğu denetimini şimdi çalıştır |
-| `/update_models` | – | Gemini model listesini yeniden al; zinciri ve Google'ın reddettiği anahtarları gösterir |
+| `/update_models` | – | Yapay zekâ modellerini kontrol et: Gemini zinciri ve reddedilen anahtarlar, ayrıca Groq, Qwen ve Nvidia için model, zincir ve engeller. `/update_models best`, kontrolü geçen en büyük modele geçer |
 | `/teshis` | 🔎 Teşhis | Son 7 günün teşhisi: özet mesaj olarak, tam rapor metin dosyası olarak. `/teshis 3` = yalnızca 3 gün. Yalnızca okur |
 | `/dil` | – | Dil seç |
 | `/yardim` | 📋 Menü | Komut özeti |
@@ -263,6 +263,23 @@ Sıra `PROVIDER_ORDER` içinde yazar. Yerel Ollama modelini `OLLAMA_PRIORITY` y�
 
 Yedek modda yapay zekâ yalnızca stop ve hedefi belirler ya da bir adayı reddeder. Sembol ve yön Gate-Keeper'dan, büyüklük `.env` dosyasından gelir ve stop asgari mesafeye çekilir. Telegram mesajı, başka bir sağlayıcı yanıt vermiş olsa bile her zaman “Groq” der; hangisinin yanıt verdiği log'da `[OK] ...` olarak yazar.
 
+### Yedek sağlayıcıların modelleri (v15.22'den itibaren)
+
+Groq, OpenRouter ve Nvidia modelleri sık sık yayından kaldırır. v15.21'e kadar her sağlayıcı `.env` içindeki tek modelle çalışıyordu ve o model kalkınca devre dışı kalıyordu. Artık bot modelleri kendisi güncel tutar; yöntem swarm.py ile aynıdır:
+
+- **İstek başına zincir.** Bot önce `.env` içindeki modele, ardından sağlayıcının model listesinden en çok üç yedek modele sorar (`AI_CHAIN_MAX`). 401, 403 veya 429 gelirse anahtarı değiştirir; anahtarlar bitince modeli. Aşırı yükte veya boş yanıtta hemen modeli değiştirir.
+- **Ölü model.** Sağlayıcı modelin artık olmadığını bildirirse (404, 410, “does not exist”, “No endpoints found”), bot onu 24 saat engeller ve bir kontrol başlatır.
+- **Yedek.** Kontrol model listesini alır, sohbet modeli olmayanları ayıklar ve en iyi adayları kısa, gerçek bir çağrıyla dener. Yanıt veren ilk model ana model olur: bot onu `.env` dosyasına yazar, hemen kullanır ve değişikliği Telegram'da bildirir. Önce mevcut modele kendisi sorar ve onu yalnızca gerçekten yanıt vermiyorsa değiştirir. Kontrol sonuçsuz kalırsa (limit, ağ) hiçbir şeyi değiştirmez.
+- **Ne zaman kontrol edilir.** Başlangıçtan 75 saniye sonra, ardından her `MODEL_AUTOUPDATE_HOURS` saatte bir ve bir arızadan beş dakika sonra.
+
+Yazmadan önce bot `.env.modelupdate.bak` yedeğini oluşturur. Sonra `.env` dosyasını doğrulamak için yeniden okur; bir değer yanlışsa eski içeriği geri yükler. Yorumlar ve diğer tüm satırlar olduğu gibi kalır.
+
+`/update_models` hemen kontrol eder ve her sağlayıcı için modeli, zinciri ve engelli modelleri gösterir. Yanıt veren model yerinde kalır. `/update_models best` ayrıca kontrolü geçen en büyük modele geçer. `MODEL_AUTOUPDATE_PIN=GROQ_MODEL` (ayrıca `QWEN_MODEL`, `NVIDIA_MODEL`, virgülle ayrılmış) yazarsan bot o sağlayıcının modeline hiç dokunmaz.
+
+- **Qwen:** Bot yalnızca OpenRouter'daki ücretsiz modelleri alır, önce Qwen modellerini. Hiçbiri kontrolü geçmezse başka bir ücretsiz model devreye girer. Kendi yazdığın ücretli model yerinde kalır. `QWEN_BASE_URL` OpenRouter'ı göstermiyorsa bot orada hiçbir şeyi değiştirmez.
+- **Maliyet:** Her kontrol Groq ve Nvidia'da kısa bir çağrıya, model değişiminde en çok altı çağrıya daha mal olur.
+- **Düşünme metni:** Bir modelin `<think>` ile `</think>` arasına yazdıklarını bot yanıttan çıkarır.
+
 ## 10. Mesajları anlamak
 
 Tablolar, mesajın bu dilde sohbette göründüğü hâliyle başlangıcını verir. “…” sembol, fiyat veya saat gibi değerlerin yerine geçer.
@@ -362,11 +379,13 @@ Dosya `nexus_ceo.py` ile aynı klasördedir. Değişiklikler yeniden başlatmada
 | `GEMINI_MODEL_1` | – | Zincirin ilk modeli |
 | `GEMINI_CHAIN_MAX` | 4 | İstek başına azami model sayısı |
 | `GEMINI_503_PAUSE` | 6 | Aşırı yükte ikinci denemeye kadar geçen saniye; 0 = deneme yok |
-| `MODEL_AUTOUPDATE`, `_HOURS`, `_NOTIFY` | true, 6, true | Model listesini otomatik güncelle, saat cinsinden aralık, değişiklikte mesaj |
+| `MODEL_AUTOUPDATE`, `_HOURS`, `_NOTIFY` | true, 6, true | Modelleri otomatik güncel tut (Gemini listesi ve yedek sağlayıcılar), saat cinsinden aralık, değişiklikte mesaj |
+| `MODEL_AUTOUPDATE_PIN` | – | Botun modelini hiç değiştirmeyeceği sağlayıcılar, örn. `GROQ_MODEL,NVIDIA_MODEL` |
+| `AI_CHAIN_MAX` | 4 | Groq, Qwen ve Nvidia için istek başına azami model sayısı |
 | `PROVIDER_ORDER` | gemini,groq,qwen,nvidia | Yedek sağlayıcıların sırası |
-| `GROQ_KEYS`, `GROQ_MODEL` | – | Groq |
-| `QWEN_KEYS`, `QWEN_MODEL`, `QWEN_BASE_URL` | – | OpenAI uyumlu bir erişim üzerinden Qwen |
-| `NVIDIA_KEYS`, `NVIDIA_MODEL` | – | Nvidia NIM |
+| `GROQ_KEYS`, `GROQ_MODEL` | – | Groq. Model kalkarsa bot onu kendisi değiştirir |
+| `QWEN_KEYS`, `QWEN_MODEL`, `QWEN_BASE_URL` | – | OpenAI uyumlu bir erişim üzerinden Qwen. OpenRouter'da bot modeli kendisi değiştirir |
+| `NVIDIA_KEYS`, `NVIDIA_MODEL` | – | Nvidia NIM. Model kalkarsa bot onu kendisi değiştirir |
 | `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_PRIORITY` | localhost, –, last | Yerel model; `first`, `last` veya `only` |
 | `SCAN_MELDUNGEN` | neu | `neu` = işlemsiz taramayı yalnızca değişiklikte bildir; `alle` = her taramada |
 
@@ -390,6 +409,7 @@ Durum dosyalarını bot kendisi yazar; bot çalışırken onları elle düzenlem
 | `nexus_lang.py` | Almanca, İngilizce, Türkçe metinler | Hayır; onsuz bot özgün metinleri gönderir |
 | `nexus_diagnose.py` | Teşhis betiği, yalnızca okur. `/teshis` ile ya da terminalde `python3 nexus_diagnose.py` ile çalışır | Evet; o zaman `/teshis` dosyanın eksik olduğunu bildirir |
 | `.env` | Ayarlar ve erişim bilgileri | Hayır |
+| `.env.modelupdate.bak` | Son otomatik model değişiminden önceki `.env` yedeği. Aynı erişim bilgilerini içerir | Evet |
 | `capital_markets_config.py` | Semboller, epic'ler, asgari büyüklükler, spread'ler (isteğe bağlı) | Evet; bot o zaman dokuz piyasalık yerleşik listeyle işlem yapar |
 | `nexus_ceo.log` | Log. Gece yarısı yeni dosyaya geçer, 7 gün saklanır | Evet, eski günler |
 | `nexus_quant.db` | Veritabanı: haberler, notların, işlemler, istatistik | Hayır, yoksa notlar ve istatistik gider |
@@ -438,6 +458,7 @@ Durum dosyaları güncellemelerde korunur. HARD BLOCK'lar (işlem engelleri) her
 | Mesajlar yanlış dilde veya karışık geliyor | `BOT_LANGUAGE` yanlış, `nexus_lang.py` eksik ya da bir metin için kural yok | `/dil` gönder; `nexus_lang_missing.log` dosyasına bak |
 | Bot hiçbir şey açmıyor | Bir kilit devrede ya da Gate-Keeper aday bulamıyor | “🔔 Yeni işlem olmadan tarama:” mesajını oku; `/pozisyon`, `/kayip`, `/bloklar`; hafta sonu yalnızca kripto |
 | “INFO … \| Gemini quota doldu → Groq ile devam ediliyor” her taramada geliyor | Anahtarlar reddedildi, günlük limite ulaşıldı ya da ücretsiz kota için çok fazla tarama var | `/update_models`; reddedilen anahtarları değiştir; tarama aralığını uzat |
+| Log'da her taramada `Groq key 1 hata: ...` (veya Qwen, Nvidia) yazıyor | Model sağlayıcıda kapatılmış, anahtar reddedilmiş ya da limite ulaşılmış | `/update_models` modeli, zinciri ve engelleri gösterir; `/teshis` her sağlayıcı için en sık hata mesajını verir |
 | Kademeler satılmıyor | Hesapta Hedging modu açık, `MIRROR_TP_ENABLED=false` ya da saatlik ATR alınamıyor | Hedging'i kapat; `.env` dosyasını denetle |
 | Pozisyon raporu Take Profit göstermiyor | Capital.com'da Take Profit eksik | Capital uygulamasında ekle |
 | Pozisyon raporu günlük gürültü konusunda uyarıyor | Stop asgari mesafeden yakın | `/sl_genislet`, ardından `/sl_genislet evet` |
@@ -476,6 +497,7 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 - **Manuel işlem** ne gürültü korumasını ne de `MAX_POSITION_EUR` değerini kullanır.
 - **Metinle HARD BLOCK (işlem engeli) çalışmaz.** “gold” gibi sözcükleri bir sembole bağlayan tablo, kodun daha aşağısında aynı adı taşıyan ikinci bir tablo (`ASSET_KEYWORDS`, haberler için) tarafından ezilir. Bu yüzden bot hiçbir cümlede sembol tanımaz ve hiçbir zaman engel koymaz. Hata bilerek düzeltilmedi: düzeltilseydi, içinde “sell”, “close”, “verkaufen” veya “kapat” ile bir sembol adı geçen bir cümle bu sembolün pozisyonlarını hemen kapatırdı.
 - **Haftalık öğrenme turundan gelen kilitler** yalnızca adında alt çizgi olmayan sembollerde devreye girer.
+- **Yedek modellerin sıralaması** modelin büyüklüğüne, bağlam uzunluğuna ve yaşına göredir, analizin kalitesine göre değil. Otomatik seçilen model eskisinden daha zayıf karar verebilir. Bot her değişikliği bildirir; modeli `.env` içinde yeniden belirleyebilir ve `MODEL_AUTOUPDATE_PIN` ile sabitleyebilirsin.
 
 ### Koruma işlevlerinin sınırları
 
@@ -492,4 +514,4 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 
 ### Neler test edildi
 
-İşlevler, taklit Capital.com, Telegram ve Gemini yanıtlarına karşı test edildi; gerçek bir canlı hesaba karşı değil. `CAPITAL_URL` değerini canlı adrese çevirmeden önce botu en az bir hafta demo hesapta çalıştır.
+İşlevler, taklit Capital.com, Telegram, Gemini, Groq, OpenRouter ve Nvidia yanıtlarına karşı test edildi; gerçek bir canlı hesaba karşı değil. Yedek sağlayıcıların model değişimi gerçek bir log'daki hata mesajlarıyla denendi, ama sağlayıcıların gerçek model listelerine karşı değil. `CAPITAL_URL` değerini canlı adrese çevirmeden önce botu en az bir hafta demo hesapta çalıştır.

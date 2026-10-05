@@ -169,9 +169,9 @@ def ai_hint(lang):
 # ---------------------------------------------------------------------------
 RULES = [
     ("🤖 NEXUS NATURE v15.6 — Komut Rehberi\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ANALİZ & DURUM\n/status      | status      — Tam Gemini analizi + Gremium oylama\n/pozisyon    | pozisyon    — Acik pozisyonlar, PnL, Pyramiding\n/sl_weiten                — Stops offener Positionen an der Tagesspanne pruefen (ausfuehren: /sl_weiten ja)\n/ma          | ma          — MA9/26 + ADX + RSI sinyalleri\n/stats       | stats       — Trade istatistikleri + asset performansi\n\n🔬 ARASTIRMA\n/backtest SEMBOL GUN      — Ornek: /backtest GOLD 200\n/deepdive SEMBOL TF GUN   — Ornek: /deepdive GOLD HOUR_4 30\n/news SEMBOL GUN          — Ornek: /news OIL 7\n/newscollect | newscollect — Manuel haber toplama: RSS + Grounding\n/sources     | sources     — Kaynak guvenilirlik skorlari\n/dbtemizle   | dbtemizle   — Eski/bozuk haberleri DB'den sil\n\n⚠️ RİSK & KONTROL\n/volatilite  | volatilite  — Volatilite + Kara Kugu kontrolu\n/spread      | spread      — Spread tarama + config guncelleme\n/kayip       | kayip       — Bugunun kayip/zarar sayaci\n/bloklar     | bloklar     — Aktif HARD BLOCK listesi\n\n💼 POZİSYON YÖNETİMİ\n/kapat SEMBOL             — Ornek: /kapat GOLD\n/kapat ALLE               — Tum pozisyonlari kapat (onay ister)\n/manuell SEMBOL YON SIZE  — Ornek: /manuell GOLD BUY 100\n  (opsiyonel: SL TP)      — Ornek: /manuell GOLD BUY 100 1900 2100\n\n🧠 HAFIZA\n/unut        | unut        — Kaydedilen kullanici notlarini sil\n\n💬 NOT GONDERME (quota YOK)\nKomut olmadan yaz = NOT olarak kaydedilir\nGemini 30 dk icinde kullanir (48 saat gecerli)\nOrnek: Iran rafinerileri kapaniyor, Brent yukselir\n\n🚫 HARD BLOCK\nAninda Python seviyesinde — Gemini override EDEMEZ!\n  'Silver satma'          → SILVER SELL blok\n  'Silver alma'           → SILVER BUY blok\n  'Gold nicht handeln'    → GOLD tam blok\n  'Silver serbest'        → SILVER blok kaldirilir\n\n/help        | help        — Bu menü",
-     '🤖 NEXUS – Befehle\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 STAND & ANALYSE\n/position — offene Positionen mit Stop, Ziel, Tagesspanne, Stufen\n/status — volle KI-Analyse + Gremium (verbraucht eine Gemini-Anfrage)\n/signale — MA 9/26 + ADX + RSI\n/stats — Trade-Statistik je Asset\n/verluste — Verlustzähler von heute\n/sperren — aktive Handelssperren\n/volatilitaet — Schwarzer-Schwan-Prüfung jetzt\n/update_models — Gemini-Modelle und abgelehnte Keys\n/diagnose — Diagnose-Bericht der letzten 7 Tage (/diagnose 3 = 3 Tage)\n\n💼 POSITIONEN\n/schliessen GOLD — alle Positionen eines Symbols schließen\n/schliessen ALLE — alle Positionen schließen (fragt nach)\n/manuell GOLD BUY 100 — manueller Trade über 100 EUR\n/manuell GOLD BUY 100 1900 2100 — mit eigenem SL und TP\n/sl_weiten — Stops im Tagesrauschen zeigen (ausführen: /sl_weiten ja)\n\n🔬 RECHERCHE\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/nachrichten OIL 7\n/news_sammeln — Nachrichten jetzt sammeln\n/quellen — Zuverlässigkeit der Quellen\n/spread — Spreads messen und speichern\n/db_bereinigen — alte Nachrichten löschen\n\n🧠 NOTIZEN\nText ohne Befehl = Notiz für die KI-Analyse (48 Stunden gültig)\n/vergessen — gespeicherte Notizen löschen\n\n🚫 HANDELSSPERRE PER TEXT\nDerzeit ohne Funktion (Fehler im Code, siehe Handbuch, Abschnitt 15).\nZum Stoppen: /schliessen und den Dienst anhalten.\n\n🌐 /sprache — Sprache ändern\n/hilfe — diese Übersicht',
-     "🤖 NEXUS – Commands\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 STATUS & ANALYSIS\n/position — open positions with stop, target, daily range, levels\n/status — full AI analysis + committee vote (uses one Gemini request)\n/signals — MA 9/26 + ADX + RSI\n/stats — trade statistics per asset\n/losses — today's loss counter\n/blocks — active trading blocks\n/volatility — run the Black Swan check now\n/update_models — Gemini models and rejected keys\n/diagnosis — diagnosis report for the last 7 days (/diagnosis 3 = 3 days)\n\n💼 POSITIONS\n/close GOLD — close all positions of one symbol\n/close ALL — close all positions (asks first)\n/manual GOLD BUY 100 — manual trade for 100 EUR\n/manual GOLD BUY 100 1900 2100 — with your own SL and TP\n/sl_widen — show stops inside the daily noise (apply: /sl_widen yes)\n\n🔬 RESEARCH\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/news OIL 7\n/newscollect — collect news now\n/sources — source reliability scores\n/spread — measure and store spreads\n/db_clean — delete old news\n\n🧠 NOTES\nText without a command = note for the AI analysis (valid 48 hours)\n/forget — delete saved notes\n\n🚫 TRADING BLOCK BY TEXT\nCurrently not working (bug in the code, see manual, section 15).\nTo stop trading: /close and stop the service.\n\n🌐 /language — change language\n/help — this overview",
-     "🤖 NEXUS – Komutlar\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 DURUM & ANALİZ\n/pozisyon — açık pozisyonlar: stop, hedef, günlük aralık, kademeler\n/status — tam yapay zekâ analizi + Kurul oylaması (bir Gemini isteği harcar)\n/sinyaller — MA 9/26 + ADX + RSI\n/stats — asset başına işlem istatistiği\n/kayip — bugünün kayıp sayacı\n/bloklar — aktif HARD BLOCK listesi\n/volatilite — Kara Kuğu kontrolünü şimdi çalıştır\n/update_models — Gemini modelleri ve reddedilen key'ler\n/teshis — son 7 günün teşhis raporu (/teshis 3 = 3 gün)\n\n💼 POZİSYONLAR\n/kapat GOLD — bir sembolün tüm pozisyonlarını kapat\n/kapat HEPSI — tüm pozisyonları kapat (onay ister)\n/manuel GOLD BUY 100 — 100 EUR'luk manuel işlem\n/manuel GOLD BUY 100 1900 2100 — kendi SL ve TP değerinle\n/sl_genislet — günlük gürültüdeki stopları göster (uygula: /sl_genislet evet)\n\n🔬 ARAŞTIRMA\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/haberler OIL 7\n/haber_topla — haberleri şimdi topla\n/kaynaklar — kaynak güvenilirlik skorları\n/spread — spread tarama + config güncelleme\n/dbtemizle — eski haberleri sil\n\n🧠 NOTLAR\nKomutsuz yazı = yapay zekâ analizi için not (48 saat geçerli)\n/unut — kaydedilen notları sil\n\n🚫 YAZIYLA HARD BLOCK\nŞu an çalışmıyor (koddaki hata, kılavuz bölüm 15).\nİşlemi durdurmak için: /kapat ve servisi durdur.\n\n🌐 /dil — dili değiştir\n/yardim — bu menü"),
+     '🤖 NEXUS – Befehle\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 STAND & ANALYSE\n/position — offene Positionen mit Stop, Ziel, Tagesspanne, Stufen\n/status — volle KI-Analyse + Gremium (verbraucht eine Gemini-Anfrage)\n/signale — MA 9/26 + ADX + RSI\n/stats — Trade-Statistik je Asset\n/verluste — Verlustzähler von heute\n/sperren — aktive Handelssperren\n/volatilitaet — Schwarzer-Schwan-Prüfung jetzt\n/update_models — KI-Modelle prüfen: Gemini, Groq, Qwen, Nvidia (/update_models best = bestes Modell wählen)\n/diagnose — Diagnose-Bericht der letzten 7 Tage (/diagnose 3 = 3 Tage)\n\n💼 POSITIONEN\n/schliessen GOLD — alle Positionen eines Symbols schließen\n/schliessen ALLE — alle Positionen schließen (fragt nach)\n/manuell GOLD BUY 100 — manueller Trade über 100 EUR\n/manuell GOLD BUY 100 1900 2100 — mit eigenem SL und TP\n/sl_weiten — Stops im Tagesrauschen zeigen (ausführen: /sl_weiten ja)\n\n🔬 RECHERCHE\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/nachrichten OIL 7\n/news_sammeln — Nachrichten jetzt sammeln\n/quellen — Zuverlässigkeit der Quellen\n/spread — Spreads messen und speichern\n/db_bereinigen — alte Nachrichten löschen\n\n🧠 NOTIZEN\nText ohne Befehl = Notiz für die KI-Analyse (48 Stunden gültig)\n/vergessen — gespeicherte Notizen löschen\n\n🚫 HANDELSSPERRE PER TEXT\nDerzeit ohne Funktion (Fehler im Code, siehe Handbuch, Abschnitt 15).\nZum Stoppen: /schliessen und den Dienst anhalten.\n\n🌐 /sprache — Sprache ändern\n/hilfe — diese Übersicht',
+     "🤖 NEXUS – Commands\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 STATUS & ANALYSIS\n/position — open positions with stop, target, daily range, levels\n/status — full AI analysis + committee vote (uses one Gemini request)\n/signals — MA 9/26 + ADX + RSI\n/stats — trade statistics per asset\n/losses — today's loss counter\n/blocks — active trading blocks\n/volatility — run the Black Swan check now\n/update_models — check AI models: Gemini, Groq, Qwen, Nvidia (/update_models best = pick the best model)\n/diagnosis — diagnosis report for the last 7 days (/diagnosis 3 = 3 days)\n\n💼 POSITIONS\n/close GOLD — close all positions of one symbol\n/close ALL — close all positions (asks first)\n/manual GOLD BUY 100 — manual trade for 100 EUR\n/manual GOLD BUY 100 1900 2100 — with your own SL and TP\n/sl_widen — show stops inside the daily noise (apply: /sl_widen yes)\n\n🔬 RESEARCH\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/news OIL 7\n/newscollect — collect news now\n/sources — source reliability scores\n/spread — measure and store spreads\n/db_clean — delete old news\n\n🧠 NOTES\nText without a command = note for the AI analysis (valid 48 hours)\n/forget — delete saved notes\n\n🚫 TRADING BLOCK BY TEXT\nCurrently not working (bug in the code, see manual, section 15).\nTo stop trading: /close and stop the service.\n\n🌐 /language — change language\n/help — this overview",
+     "🤖 NEXUS – Komutlar\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 DURUM & ANALİZ\n/pozisyon — açık pozisyonlar: stop, hedef, günlük aralık, kademeler\n/status — tam yapay zekâ analizi + Kurul oylaması (bir Gemini isteği harcar)\n/sinyaller — MA 9/26 + ADX + RSI\n/stats — asset başına işlem istatistiği\n/kayip — bugünün kayıp sayacı\n/bloklar — aktif HARD BLOCK listesi\n/volatilite — Kara Kuğu kontrolünü şimdi çalıştır\n/update_models — yapay zekâ modellerini kontrol et: Gemini, Groq, Qwen, Nvidia (/update_models best = en iyi modeli seç)\n/teshis — son 7 günün teşhis raporu (/teshis 3 = 3 gün)\n\n💼 POZİSYONLAR\n/kapat GOLD — bir sembolün tüm pozisyonlarını kapat\n/kapat HEPSI — tüm pozisyonları kapat (onay ister)\n/manuel GOLD BUY 100 — 100 EUR'luk manuel işlem\n/manuel GOLD BUY 100 1900 2100 — kendi SL ve TP değerinle\n/sl_genislet — günlük gürültüdeki stopları göster (uygula: /sl_genislet evet)\n\n🔬 ARAŞTIRMA\n/backtest GOLD 200\n/deepdive GOLD HOUR_4 30\n/haberler OIL 7\n/haber_topla — haberleri şimdi topla\n/kaynaklar — kaynak güvenilirlik skorları\n/spread — spread tarama + config güncelleme\n/dbtemizle — eski haberleri sil\n\n🧠 NOTLAR\nKomutsuz yazı = yapay zekâ analizi için not (48 saat geçerli)\n/unut — kaydedilen notları sil\n\n🚫 YAZIYLA HARD BLOCK\nŞu an çalışmıyor (koddaki hata, kılavuz bölüm 15).\nİşlemi durdurmak için: /kapat ve servisi durdur.\n\n🌐 /dil — dili değiştir\n/yardim — bu menü"),
     ('🕐 {0} | NEXUS NATURE {1} - BRIDGEWATER EDITION Baslatildi\nMod: Rogers Filter + Gremium 5 + MA/ADX/RSI/BB/FIB/EMA200\nInterval: {2}h (Macro-Scan) | Max Positionen: {3}\nKara Kuğu Koruması (3 Seviye):\n  -%8  Gemini Acil Karar\n  -%12 Otomatik Kapat\n  -%18 ACIL TUM POZİSYONLARI KAPAT\nKoruma-Thread: 5 Dakika (Quota yok)\nHaber-Thread: 60 Dakika (RSS + X/Nitter, Quota yok)\nAlternatif Veri: 31 Cargo Airline + 18 Gemi Bolgesi + BDI\n  GDACS + NHC Kasirga + HDD/CDD + AB Gaz Deposu + ECMWF + NOAA\nHaber Geçmişi: 14 Gün\nPyramiding: Sinir yok (min %2 kar per seviye) | EXIT: Gemini veya Trailing SL %5\nStop Loss: min. {4} × Tagesspanne (Tages-ATR), max. {5}% | /sl_weiten\nWiedereinstieg: frühestens {6} h nach einer Schließung | Scan-Meldungen: {7}\nGremium: Cihat/Rogers/Dalio/Taleb/Soros ({8}/5 JA gerekli, Krypto {9}/5)\nSpread Filter: Max {10} | Auto-Config: AKTİF\nHaftasonu: ALLE Assets AKTIF (Krypto gleich wie andere behandelt)\nAşama 1 Filtre (Bollinger+Fib): AKTİF\nGoogle Search Grounding: DEAKTIF (GDELT + AlphaVantage aktif)\nSQLite Hafıza: AKTİF\nKelly-Kriteri: AKTİF\nEconomic Calendar: AKTIF\nHava Durumu API: AKTİF\nKaynak Güvenilirliği: AKTİF\n\nKomutlar: /help\n\n🔧 TRADING ASSETS:\n{11}',
      '🕐 {0} | NEXUS {1} gestartet\nModus: Rogers-Filter + Gremium (5 Regeln) + MA/ADX/RSI/BB/FIB/EMA200\nScan-Intervall: {2} h | Max. Positionen: {3}\nSchwarzer-Schwan-Schutz (3 Stufen):\n  -8 %  KI-Notfallentscheidung\n  -12 % automatisch schließen\n  -18 % ALLE POSITIONEN SCHLIESSEN\nSchutz-Lauf: alle 5 Minuten (ohne KI-Kontingent)\nNachrichten: alle 60 Minuten (RSS + X, ohne KI-Kontingent)\nZusatzdaten: Frachtflüge, Schiffsverkehr, BDI, GDACS, Hurrikane, HDD/CDD, EU-Gasspeicher, Wetter\nNachrichten-Archiv: 14 Tage\nPyramiding: ohne Obergrenze (mind. 2 % Gewinn je Stufe) | Exit: KI oder Trailing-SL 5 %\nStop Loss: mind. {4} × Tagesspanne (Tages-ATR), max. {5}% | /sl_weiten\nWiedereinstieg: frühestens {6} h nach einer Schließung | Scan-Meldungen: {7}\nGremium: Cihat/Rogers/Dalio/Taleb/Soros ({8}/5 JA nötig, Krypto {9}/5)\nSpread-Filter: max. {10}\nWochenende: nur Krypto (höchstens 3 Positionen)\n\nBefehle: /hilfe | Sprache: /sprache\n\n🔧 HANDELBARE SYMBOLE:\n{11}',
      '🕐 {0} | NEXUS {1} started\nMode: Rogers filter + committee (5 rules) + MA/ADX/RSI/BB/FIB/EMA200\nScan interval: {2} h | Max positions: {3}\nBlack Swan protection (3 levels):\n  -8%  AI emergency decision\n  -12% close automatically\n  -18% CLOSE ALL POSITIONS\nProtection run: every 5 minutes (no AI quota)\nNews: every 60 minutes (RSS + X, no AI quota)\nExtra data: cargo flights, ship traffic, BDI, GDACS, hurricanes, HDD/CDD, EU gas storage, weather\nNews archive: 14 days\nPyramiding: no upper limit (min 2% profit per level) | Exit: AI or trailing SL 5%\nStop Loss: min {4} × daily range (daily ATR), max {5}% | /sl_widen\nRe-entry: earliest {6} h after a close | Scan messages: {7}\nCommittee: Cihat/Rogers/Dalio/Taleb/Soros ({8}/5 YES needed, crypto {9}/5)\nSpread filter: max {10}\nWeekend: crypto only (at most 3 positions)\n\nCommands: /help | Language: /language\n\n🔧 TRADABLE SYMBOLS:\n{11}',
@@ -1728,6 +1728,142 @@ RULES = [
      '⚠️ {0}: Schließen fehlgeschlagen - {1}',
      '⚠️ {0}: closing failed - {1}',
      '⚠️ {0}: kapatma başarısız - {1}'),
+    ('🔍 Modelle werden geprüft ... das kann ein paar Minuten dauern.',
+     '🔍 Modelle werden geprüft ... das kann ein paar Minuten dauern.',
+     '🔍 Checking models ... this can take a few minutes.',
+     '🔍 Modeller kontrol ediliyor ... bu birkaç dakika sürebilir.'),
+    ('🧩 ERSATZ-KI: MODELLE',
+     '🧩 ERSATZ-KI: MODELLE',
+     '🧩 FALLBACK AI: MODELS',
+     '🧩 YEDEK YAPAY ZEKÂ: MODELLER'),
+    ('{0}: kein Key in der .env - nicht benutzt',
+     '{0}: kein Key in der .env - nicht benutzt',
+     '{0}: no key in the .env - not used',
+     '{0}: .env içinde key yok - kullanılmıyor'),
+    (' (Keys: ',
+     ' (Keys: ',
+     ' (keys: ',
+     ' (key sayısı: '),
+    ('   Ersatzmodelle: noch keine Liste abgerufen',
+     '   Ersatzmodelle: noch keine Liste abgerufen',
+     '   Backup models: no list fetched yet',
+     '   Yedek modeller: liste henüz alınmadı'),
+    ('Gesperrt für 24 h (antwortet nicht): ',
+     'Gesperrt für 24 h (antwortet nicht): ',
+     'Blocked for 24 h (not answering): ',
+     '24 sa engelli (yanıt vermiyor): '),
+    ('Letzte Prüfung: {0}',
+     'Letzte Prüfung: {0}',
+     'Last check: {0}',
+     'Son kontrol: {0}'),
+    ('Geändert:',
+     'Geändert:',
+     'Changed:',
+     'Değişti:'),
+    ('Hinweise:',
+     'Hinweise:',
+     'Notes:',
+     'Notlar:'),
+    ('Probleme:',
+     'Probleme:',
+     'Problems:',
+     'Sorunlar:'),
+    ('{0}: Modell ersetzt: {1} → {2} (Grund: {3})',
+     '{0}: Modell ersetzt: {1} → {2} (Grund: {3})',
+     '{0}: model replaced: {1} → {2} (reason: {3})',
+     '{0}: model değiştirildi: {1} → {2} (neden: {3})'),
+    ('nicht mehr gratis oder läuft bald aus',
+     'nicht mehr gratis oder läuft bald aus',
+     'no longer free or expiring soon',
+     'artık ücretsiz değil veya yakında kalkıyor'),
+    ('kein Modell gesetzt',
+     'kein Modell gesetzt',
+     'no model set',
+     'model ayarlanmamış'),
+    ('antwortet nicht mehr',
+     'antwortet nicht mehr',
+     'no longer answering',
+     'artık yanıt vermiyor'),
+    ('besseres Modell gefunden',
+     'besseres Modell gefunden',
+     'better model found',
+     'daha iyi model bulundu'),
+    ('(leer)',
+     '(leer)',
+     '(empty)',
+     '(boş)'),
+    (' ✓ in Ordnung (kein besseres Modell hat die Prüfung bestanden)',
+     ' ✓ in Ordnung (kein besseres Modell hat die Prüfung bestanden)',
+     ' ✓ OK (no better model passed the check)',
+     ' ✓ sorun yok (daha iyi hiçbir model kontrolü geçmedi)'),
+    (' ✓ in Ordnung',
+     ' ✓ in Ordnung',
+     ' ✓ OK',
+     ' ✓ sorun yok'),
+    (' - bezahltes Modell, bewusst gewählt: bleibt',
+     ' - bezahltes Modell, bewusst gewählt: bleibt',
+     ' - paid model, chosen on purpose: kept',
+     ' - ücretli model, bilerek seçilmiş: kalıyor'),
+    ('{0}: {1} fällt aus ({2}), aber kein Ersatz hat die Prüfung bestanden ({3} Tests, {4} Kandidaten) - neuer Versuch beim nächsten Lauf',
+     '{0}: {1} fällt aus ({2}), aber kein Ersatz hat die Prüfung bestanden ({3} Tests, {4} Kandidaten) - neuer Versuch beim nächsten Lauf',
+     '{0}: {1} is down ({2}), but no replacement passed the check ({3} tests, {4} candidates) - next try on the next run',
+     '{0}: {1} çalışmıyor ({2}), ama hiçbir yedek kontrolü geçmedi ({3} test, {4} aday) - sonraki çalışmada yeniden denenecek'),
+    (' - festgehalten (MODEL_AUTOUPDATE_PIN): bleibt',
+     ' - festgehalten (MODEL_AUTOUPDATE_PIN): bleibt',
+     ' - pinned (MODEL_AUTOUPDATE_PIN): kept',
+     ' - sabitlenmiş (MODEL_AUTOUPDATE_PIN): kalıyor'),
+    (': beste Kandidaten: ',
+     ': beste Kandidaten: ',
+     ': best candidates: ',
+     ': en iyi adaylar: '),
+    ('{0}: Modellliste nicht abrufbar: {1}',
+     '{0}: Modellliste nicht abrufbar: {1}',
+     '{0}: model list not available: {1}',
+     '{0}: model listesi alınamadı: {1}'),
+    ('Liste unplausibel ({0} Einträge)',
+     'Liste unplausibel ({0} Einträge)',
+     'list implausible ({0} entries)',
+     'liste tutarsız ({0} kayıt)'),
+    ('Key abgelehnt ({0})',
+     'Key abgelehnt ({0})',
+     'key rejected ({0})',
+     'key reddedildi ({0})'),
+    ('.env nicht geschrieben ({0}) - das neue Modell gilt bis zum nächsten Neustart',
+     '.env nicht geschrieben ({0}) - das neue Modell gilt bis zum nächsten Neustart',
+     '.env not written ({0}) - the new model is used until the next restart',
+     '.env yazılamadı ({0}) - yeni model bir sonraki yeniden başlatmaya kadar geçerli'),
+    ('Kontrolle fehlgeschlagen ({0}), alter Inhalt wiederhergestellt',
+     'Kontrolle fehlgeschlagen ({0}), alter Inhalt wiederhergestellt',
+     'verification failed ({0}), old content restored',
+     'doğrulama başarısız ({0}), eski içerik geri yüklendi'),
+    (', alter Inhalt wiederhergestellt',
+     ', alter Inhalt wiederhergestellt',
+     ', old content restored',
+     ', eski içerik geri yüklendi'),
+    ('.env nicht gefunden',
+     '.env nicht gefunden',
+     '.env not found',
+     '.env bulunamadı'),
+    ('Qwen: QWEN_BASE_URL ist nicht OpenRouter - kein automatischer Wechsel',
+     'Qwen: QWEN_BASE_URL ist nicht OpenRouter - kein automatischer Wechsel',
+     'Qwen: QWEN_BASE_URL is not OpenRouter - no automatic switch',
+     'Qwen: QWEN_BASE_URL OpenRouter değil - otomatik değişim yok'),
+    ('Modell-Prüfung läuft bereits',
+     'Modell-Prüfung läuft bereits',
+     'Model check is already running',
+     'Model kontrolü zaten çalışıyor'),
+    ('🔄 Ersatz-KI: Modell automatisch ersetzt\n',
+     '🔄 Ersatz-KI: Modell automatisch ersetzt\n',
+     '🔄 Fallback AI: model replaced automatically\n',
+     '🔄 Yedek yapay zekâ: model otomatik değiştirildi\n'),
+    ('OpenRouter lehnt Gratis-Modelle wegen der Konto-Einstellung ab (data policy) - bitte auf openrouter.ai unter Settings > Privacy freigeben',
+     'OpenRouter lehnt Gratis-Modelle wegen der Konto-Einstellung ab (data policy) - bitte auf openrouter.ai unter Settings > Privacy freigeben',
+     'OpenRouter rejects free models because of the account setting (data policy) - please allow them on openrouter.ai under Settings > Privacy',
+     'OpenRouter hesap ayarı nedeniyle ücretsiz modelleri reddediyor (data policy) - lütfen openrouter.ai üzerinde Settings > Privacy altından izin ver'),
+    (' - Prüfung ohne Ergebnis (Limit oder Netz): bleibt vorerst',
+     ' - Prüfung ohne Ergebnis (Limit oder Netz): bleibt vorerst',
+     ' - check without result (limit or network): kept for now',
+     ' - kontrol sonuçsuz (limit veya ağ): şimdilik kalıyor'),
 ]
 
 
@@ -1737,6 +1873,7 @@ RULES = [
 _IDX = {"de": 1, "en": 2, "tr": 3}
 _PH = re.compile(r"\{(\d+)\}")
 _compiled = {}          # sprache -> [(regex, reihenfolge der platzhalter, zieltext)]
+_gleich = {}            # sprache -> [regex]: Vorlagen, die in dieser Sprache schon stimmen
 _missing = set()
 MISSING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nexus_lang_missing.log")
 
@@ -1746,15 +1883,20 @@ def _unbrace(s):
 
 
 def _compile(lang):
-    regeln = []
+    regeln, gleich = [], []
     for rule in RULES:
         src, tgt = rule[0], rule[_IDX[lang]]
-        if tgt == src:
-            continue
         teile = _PH.split(src)                      # text, nr, text, nr, ... , text
         literal = "".join(teile[0::2])
         if len(re.findall(r"[^\W\d_]", literal)) < 3:
             continue                                # zu wenig fester Text - wuerde ueberall passen
+        if tgt == src:
+            # Text ist in dieser Sprache schon richtig: nichts ersetzen, aber als "bekannt"
+            # merken - sonst landet er faelschlich in nexus_lang_missing.log
+            if len(literal.strip()) >= 14:
+                gleich.append(re.compile("".join(re.escape(_unbrace(t)) if i % 2 == 0 else "[^\\n]*?"
+                                                 for i, t in enumerate(teile))))
+            continue
         rx, order = "", []
         for i, t in enumerate(teile):
             if i % 2 == 0:
@@ -1774,6 +1916,7 @@ def _compile(lang):
                 rx = rx + r"(?![^\W\d_])"
         regeln.append((len(literal), re.compile(rx), order, tgt))
     regeln.sort(key=lambda r: -r[0])                # laengster fester Text zuerst
+    _gleich[lang] = gleich
     return [(r[1], r[2], r[3]) for r in regeln]
 
 
@@ -1799,7 +1942,7 @@ def translate(text, lang):
     for rx, order, tgt in _compiled[lang]:
         out, n = rx.subn(_ersetzer(order, tgt), out)
         treffer += n
-    if treffer == 0:
+    if treffer == 0 and not any(rx.search(text) for rx in _gleich.get(lang, ())):
         _note_missing(text, lang)
     return out
 
