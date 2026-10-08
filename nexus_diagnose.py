@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "7 (fuer NEXUS v15.24)"
+VERSION = "8 (fuer NEXUS v16.0)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -44,7 +44,10 @@ KURZ_MARKE = "KURZFASSUNG"
 # .env-Eintraege, die gezeigt werden duerfen (keine Zugangsdaten)
 ZEIGEN = [
     "BOT_LANGUAGE", "SCAN_INTERVAL_SEC", "TRADING_ASSETS", "POSITION_SIZE_PCT", "MIN_POSITION_EUR",
-    "MAX_POSITION_EUR", "MAX_POSITIONEN", "MAX_SPREAD", "GREMIUM_MIN_JA", "GREMIUM_MIN_JA_KRYPTO",
+    "MAX_POSITION_EUR", "MAX_POSITIONEN", "MAX_SPREAD", "GREMIUM_MODUS", "GREMIUM_MEHRHEIT", "GREMIUM_MEHRHEIT_KRYPTO",
+    "GREMIUM_MIN_ANTWORTEN", "GREMIUM_MAX_KANDIDATEN", "GREMIUM_GUELTIG_STD", "GREMIUM_PARALLEL", "GREMIUM_FRIST", "GREMIUM_BEWERTUNG_STD",
+    "GREMIUM_GEWICHTUNG", "GREMIUM_VORSITZ", "CLAUDE_MODELL", "CLAUDE_CLI", "CLAUDE_TIMEOUT",
+    "GREMIUM_VORSITZ_ERSATZ", "GREMIUM_MIN_JA", "GREMIUM_MIN_JA_KRYPTO",
     "KRYPTO_NACHT_SPERRE", "AUTO_EXIT", "SL_ATR_MULT", "SL_MAX_PCT", "STOP_LEITER", "MAX_JE_GRUPPE", "ATR_DAILY_PERIOD", "ATR_DAILY_ORAN",
     "MIRROR_TP_ENABLED", "MIRROR_TP_LEVEL_1_MULT", "MIRROR_TP_LEVEL_2_MULT", "MIRROR_TP_LEVEL_3_MULT",
     "MIRROR_TP_CLOSE_PCT", "MAX_VERLUSTE_PRO_TAG", "WIEDEREINSTIEG_SPERRE_STD", "SCAN_MELDUNGEN",
@@ -95,6 +98,16 @@ EREIGNISSE = [
     ("KI: Gemini-Kette ohne Antwort", "kombinasyonları quota dolu"),
     ("KI: alle Ersatz-Anbieter ausgefallen", "Tüm AI provider başarısız"),
     ("Warnung im Stop-Lauf (Trailing SL epic)", "Trailing SL epic"),
+    ("Gremium beraten", re.compile(r"GREMIUM \S+: (BUY|SELL|-) \| (UYGULA|BEKLE)")),
+    ("Gremium: Beschluss ausgefuehrt", re.compile(r"GREMIUM \S+: (BUY|SELL) \| UYGULA")),
+    ("Gremium: Vorsitz gestoppt", "BEKLE vorsitz_stop"),
+    ("Gremium: Vorsitz ohne Antwort", "BEKLE vorsitz_fehlt"),
+    ("Gremium: nicht beschlussfaehig", "BEKLE beschlussunfaehig"),
+    ("Gremium: gespalten (Senaryo 4)", "BEKLE konflikt"),
+    ("Gremium: keine Mehrheit", "BEKLE keine_mehrheit"),
+    ("Gremium: kein Kandidat im Scan", "GREMIUM: kein Kandidat"),
+    ("KI: Claude-Vorsitz hat geantwortet", "[OK] Claude-Vorsitz"),
+    ("KI: Claude-Vorsitz Fehler", "Claude-Vorsitz Fehler"),
     ("Sprache gesetzt", "Sprache gesetzt"),
 ]
 
@@ -200,7 +213,7 @@ def teil0(bot_dir, env, doppelt):
             stand = "v15.10 bis v15.15"
         else:
             stand = "aelter als v15.10"
-        merkmale = [("Stop-Leiter/Gruppen-Limit (v15.24)", "def gruppen_belegt("), ("Modell-Schleife Ersatz-KI (v15.22)", "def ai_chain_call("), ("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
+        merkmale = [("Gremium 11 Mentoren (v16.0)", "def gremium_zyklus("), ("Stop-Leiter/Gruppen-Limit (v15.24)", "def gruppen_belegt("), ("Modell-Schleife Ersatz-KI (v15.22)", "def ai_chain_call("), ("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
                     ("Stop aus der Tagesspanne (v15.17)", "def sl_min_distance("), ("Schliess-Melder (v15.16)", "def closed_position_watch(")]
         K["stand"] = stand
         print("  Code-Stand: %s   (%d Zeilen, geaendert %s)" % (
@@ -373,7 +386,8 @@ def teil1(bot_dir, days):
 
     for name in ("Order gesendet, Position NICHT gefunden", "Order abgelehnt", "Gegensignal (EXIT)",
                  "Sperre: Wiedereinstieg", "Sperre: maximale Positionen", "Sperre: Gruppen-Limit",
-                 "Stop-Leiter nachgezogen", "Stop-Leiter abgelehnt", "Trailing-Stop wirklich nachgezogen",
+                 "Stop-Leiter nachgezogen", "Stop-Leiter abgelehnt", "Trailing-Stop wirklich nachgezogen", "Gremium beraten",
+                 "KI: Claude-Vorsitz Fehler",
                  "Warnung im Stop-Lauf (Trailing SL epic)", "Schwarzer Schwan",
                  "KI: Modell automatisch ersetzt", "KI: kein Ersatzmodell bestand die Pruefung"):
         if letzte.get(name):
@@ -833,6 +847,7 @@ TEXTE = {
            "s_max": "Max. Positionen", "s_verlust": "Verluste", "s_spread": "Spread", "s_dd": "Tages-Stopp",
            "dreh2": "Gegensignale: {0} · Position geschlossen: {1} · Gegenposition entstanden: {2}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3} · Modell ersetzt {4}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
            "kein_log": "Kein Log im Zeitraum.", "kein_api": "Capital.com: keine Daten.", "api_fehler": "Capital.com: {0} Abfragen fehlgeschlagen.",
+           "gremium": "Gremium ({0} Tage): beraten {1} · ausgeführt {2} · Vorsitz gestoppt {3} · nicht beschlussfähig {4} · gespalten {5} · keine Mehrheit {6} · Claude ok {7} / Fehler {8}",
            "keine": "keine"},
     "en": {"kopf": "🔎 NEXUS diagnosis · {0} days", "stand": "Version: {0}", "dienst": "Service: {0}, restarts: {1}", "sprache": "Language: {0}",
            "konto": "Account ({0}): {1:.2f} {4} · available {2:.2f} · open {3:+.2f}", "offen": "Open positions: {0}",
@@ -846,6 +861,7 @@ TEXTE = {
            "s_max": "max positions", "s_verlust": "losses", "s_spread": "spread", "s_dd": "daily stop",
            "dreh2": "Opposite signals: {0} · position closed: {1} · opposite position created: {2}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3} · model replaced {4}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
            "kein_log": "No log in this period.", "kein_api": "Capital.com: no data.", "api_fehler": "Capital.com: {0} requests failed.",
+           "gremium": "Committee ({0} days): discussed {1} · executed {2} · chair stopped {3} · no quorum {4} · split {5} · no majority {6} · Claude ok {7} / errors {8}",
            "keine": "none"},
     "tr": {"kopf": "🔎 NEXUS teşhisi · {0} gün", "stand": "Sürüm: {0}", "dienst": "Servis: {0}, yeniden başlatma: {1}", "sprache": "Dil: {0}",
            "konto": "Hesap ({0}): {1:.2f} {4} · müsait {2:.2f} · açık {3:+.2f}", "offen": "Açık pozisyon: {0}",
@@ -859,6 +875,7 @@ TEXTE = {
            "s_max": "maks. pozisyon", "s_verlust": "kayıp", "s_spread": "spread", "s_dd": "günlük durdurma",
            "dreh2": "Karşı sinyal: {0} · pozisyon kapatıldı: {1} · karşı pozisyon oluştu: {2}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3} · model değiştirildi {4}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
            "kein_log": "Bu dönemde log yok.", "kein_api": "Capital.com: veri yok.", "api_fehler": "Capital.com: {0} sorgu başarısız.",
+           "gremium": "Kurul ({0} gün): görüşüldü {1} · uygulandı {2} · başkan durdurdu {3} · yeter sayı yok {4} · bölündü {5} · çoğunluk yok {6} · Claude tamam {7} / hata {8}",
            "keine": "yok"},
 }
 
@@ -916,6 +933,12 @@ def kurzfassung(lang, days, mit_api):
             T["s_dd"], a.get("Sperre: Tages-Verlust-Stopp", 0)))
         z.append(T["ki"].format(days, a.get("KI: Gemini hat geantwortet", 0), a.get("Ersatzbetrieb im Scan", 0),
                                 a.get("KI: alle Ersatz-Anbieter ausgefallen", 0), a.get("KI: Modell automatisch ersetzt", 0)))
+        if a.get("Gremium beraten", 0) or a.get("Gremium: kein Kandidat im Scan", 0):
+            z.append(T["gremium"].format(days, a.get("Gremium beraten", 0), a.get("Gremium: Beschluss ausgefuehrt", 0),
+                                         a.get("Gremium: Vorsitz gestoppt", 0) + a.get("Gremium: Vorsitz ohne Antwort", 0),
+                                         a.get("Gremium: nicht beschlussfaehig", 0), a.get("Gremium: gespalten (Senaryo 4)", 0),
+                                         a.get("Gremium: keine Mehrheit", 0), a.get("KI: Claude-Vorsitz hat geantwortet", 0),
+                                         a.get("KI: Claude-Vorsitz Fehler", 0)))
         z.append(T["fehler"].format(K.get("fehler", 0), K.get("miss", 0)))
     else:
         z.append(T["kein_log"])
