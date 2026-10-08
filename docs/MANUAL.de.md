@@ -1,6 +1,6 @@
-# NEXUS CEO – Betriebsanleitung (v15.24)
+# NEXUS CEO – Betriebsanleitung (v16.0)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.24 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v16.0 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
 
 Am Ende stehen drei Anhänge: Spread-Tabelle (A), Kurzreferenz für den Alltag (B) und Glossar (C). Wenn du das Handbuch mit `/handbuch` in Telegram abrufst, hängt der Bot außerdem Anhang L an: deine Einstellungen von jetzt.
 
@@ -63,7 +63,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | Befehl | Taste | Was passiert |
 | --- | --- | --- |
 | `/position` | 📍 Positionen | Positionsbericht: je Position Größe, Einstieg, Kurs, Stop Loss, Take Profit, Tagesspanne, Tagesziel, Stop-Abstand in Tagesspannen und Mirror-TP-Stufen mit Status |
-| `/status` | 📊 Status | Volle KI-Analyse mit Gremium-Abstimmung. Verbraucht eine Gemini-Anfrage |
+| `/status` | 📊 Status | Volle Gemini-Analyse wie im alten Ablauf (v15). Das Gremium berät dabei nicht. Verbraucht eine Gemini-Anfrage |
 | `/signale` | 📈 Signale | Technische Signale (MA 9/26, ADX, RSI) |
 | `/stats` | 🧮 Statistik | Trade-Statistik und Ergebnis je Asset aus der Bot-Datenbank |
 | `/verluste` | 💸 Verluste | Verlustzähler von heute je Symbol |
@@ -72,6 +72,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | `/update_models` | – | KI-Modelle prüfen: Gemini-Kette und abgelehnte Keys, dazu Modell, Kette und Sperren von Groq, Qwen und Nvidia. `/update_models best` wechselt auf das größte Modell, das die Prüfung besteht |
 | `/diagnose` | 🔎 Diagnose | Diagnose der letzten 7 Tage: Kurzfassung als Nachricht, ganzer Bericht als Textdatei. `/diagnose 3` = nur 3 Tage. Nur lesend |
 | `/handbuch` | – | Das komplette Handbuch als Datei in deiner Sprache, am Ende mit den Einstellungen, mit denen der Bot jetzt läuft. `/handbuch en` = Englisch, `de` = Deutsch, `tr` = Türkisch. Fehlt die Datei neben dem Bot, lädt er sie von GitHub |
+| `/gremium` | – | Gremium: Glaubwürdigkeit der 11 Mentoren (Gewicht, richtig/falsch) und die letzten Beschlüsse. `/gremium test` prüft, ob der Vorsitz (Claude) antwortet |
 | `/sprache` | – | Sprache wählen |
 | `/hilfe` | 📋 Menü | Befehlsübersicht |
 
@@ -81,7 +82,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | --- | --- |
 | `/schliessen GOLD` | Schließt alle Positionen dieses Symbols sofort |
 | `/schliessen ALLE` | Fragt nach; erst `/schliessen ALLE BESTAETIGEN` schließt wirklich alle Positionen |
-| `/manuell GOLD BUY 100` | Eröffnet sofort eine Position über 100 EUR, ohne Gate-Keeper und Gremium. Stop und Ziel setzt der Bot selbst |
+| `/manuell GOLD BUY 100` | Eröffnet sofort eine Position über 100 EUR, ohne Gremium. Stop und Ziel setzt der Bot selbst |
 | `/manuell GOLD BUY 100 1900 2100` | Dasselbe mit eigenem Stop Loss (1900) und Take Profit (2100) |
 | `/sl_weiten` | Zeigt, welche Stops offener Positionen im Tagesrauschen liegen. Ändert nichts |
 | `/sl_weiten ja` | Setzt diese Stops auf den Mindestabstand. Nur weiter weg, nie enger; der Take Profit bleibt |
@@ -110,13 +111,18 @@ Alles, was du ohne Schrägstrich schreibst, speichert der Bot als Notiz für die
 Der Bot handelt in Scans. Zwischen zwei Scans liegen `SCAN_INTERVAL_SEC` Sekunden (Standard 21600, also 6 Stunden). Ein Scan läuft so ab:
 
 1. **Abgleich.** Der Bot gleicht seine Merker mit den offenen Positionen bei Capital.com ab und prüft den Tages-Verlust-Stopp.
-2. **Gate-Keeper.** Für jedes Symbol berechnet Python fünf technische Punkte: MA-Kreuz 9/26, ADX über 15, RSI passend zur Richtung, Bollinger-Lage, Nähe zu einem Fibonacci-Niveau. Rohstoffe können einen sechsten Punkt bekommen (Rogers-Filter, EMA 50/200). Weiter kommt nur, wer mindestens 5 Punkte hat. Krypto braucht damit 5 von 5.
-3. **Gremium.** Fünf feste Regelsätze (Cihat, Rogers, Dalio, Taleb, Soros) stimmen mit JA oder NEIN. Nötig sind 4 von 5, bei Krypto 3 von 5.
-4. **KI-Analyse.** Gemini bekommt die Kandidaten samt Nachrichten, Wetter- und Makrodaten und antwortet mit TRADE-Zeilen. Liefert Gemini nicht, formatiert ein Ersatz-Anbieter nur die vom Gate-Keeper freigegebenen Kandidaten.
-5. **Prüfungen vor der Order.** Jede TRADE-Zeile läuft durch die Sperren aus Abschnitt 8. Im Ersatzbetrieb darf nur das Symbol und die Richtung durch, die der Gate-Keeper in diesem Scan freigegeben hat.
-6. **Order.** Der Bot berechnet die Größe selbst, schiebt den Stop auf den Mindestabstand, schickt die Order und prüft nach 8 Sekunden, ob die Position wirklich im Depot steht.
+2. **Kandidaten.** Python schaut alle Märkte aus `capital_markets_config.py` an (bis v15.24 brach der Scan werktags nach 15 Märkten ab). Das technische Signal (MA 9/26, ADX, RSI auf Tageskerzen, Krypto auf 20 min / 45 min / 2 h) ist nur ein Aufmerksamkeitsfilter: Kandidat wird ein Markt mit Signal BUY oder SELL und Stärke 2 oder mehr. Vorab fallen Märkte weg, die ohnehin gesperrt wären: Wochenende und kein Krypto, `MAX_POSITIONEN` erreicht (dann nur noch Ausstiege aus offenen Positionen), Gruppe voll, Verluste des Tages, Handelssperre, Markt zu, Spread über `MAX_SPREAD`, Wiedereinstiegs-Sperre, Aufstocken ohne Pyramiding-Freigabe, und Märkte, über die das Gremium in den letzten `GREMIUM_GUELTIG_STD` Stunden schon beraten hat. Die besten `GREMIUM_MAX_KANDIDATEN` nach technischem Score kommen weiter.
+3. **Dossier.** Für jeden Kandidaten stellt Python ein Dossier mit echten Daten zusammen: Kurs und Spread, Tagesspanne (ATR), Tagestechnik (EMA 20/50/200, Veränderung über 5/20/60 Tage, Spanne der letzten 210 Tage, RSI), das Python-Signal, 4h-Technik (nicht bei Krypto), Fundamentaldaten der Gruppe (EIA-Öllager, COT für Öl, Gold und Silber, USDA für Weizen, Kaffee und Kakao, Wetter), Makro (Regime, Fear & Greed, DXY, FRED), den nächsten großen Termin, Nachrichten zum Asset aus der Datenbank (7 Tage), Depot und offene Positionen, Verluste von heute und die letzten Schließungen.
+4. **Gremium.** Die 11 Mentoren aus `mentor_name.txt` (Çiçek, Dalio, Kiyosaki, Graham, Buffett, Sander, Kostolany, Lynch, Taleb, Munger, Druckenmiller) bekommen dasselbe Dossier, jeder in einem eigenen KI-Aufruf über die Kette aus `PROVIDER_ORDER`, mit seiner Rollenkarte. Keiner sieht die Stimmen der anderen. Jeder antwortet mit BUY, SELL oder BEKLE (nicht handeln), einer Sicherheit von 0 bis 100 und einer Begründung. Das CFD ist für sie nur das Werkzeug: Sie urteilen über den Markt, als würden sie den Rohstoff selbst kaufen oder gegen ihn wetten. Die Rollenkarten stehen in `docs/GREMIUM.md`.
+5. **Zählen.** Python zählt die Stimmen, gewichtet nach Glaubwürdigkeit (siehe unten). Ein Beschluss braucht `GREMIUM_MEHRHEIT` gewichtete Stimmen von 11 (Standard 6), Krypto am Wochenende `GREMIUM_MEHRHEIT_KRYPTO` (5). Weniger als `GREMIUM_MIN_ANTWORTEN` gültige Antworten (8) heißt: nicht beschlussfähig. Stimmen 3 oder mehr für BUY und zugleich 3 oder mehr für SELL, wird nicht gehandelt (Senaryo 4 aus `mentor_name.txt`). Die Mehrheit darf auch gegen das Python-Signal entscheiden.
+6. **Vorsitz.** Steht eine Mehrheit, prüft der Vorsitz den Beschluss gegen die Daten: UYGULA (ausführen) oder BEKLE (stoppen). Die Richtung darf er nicht ändern. Er schlägt Stop und Ziel vor; liegen sie auf der falschen Seite des Kurses, nimmt Python sie aus der Tagesspanne. Standard ist Claude über die Claude Code CLI mit deinem Claude-Abo (Abschnitt 9). Antwortet der Vorsitz nicht, gibt es keinen Trade.
+7. **Prüfungen und Order.** Ausgeführt werden darf nur das Symbol mit der Richtung, die das Gremium beschlossen hat. Die Zeile läuft durch alle Sperren aus Abschnitt 8. Der Bot berechnet die Größe selbst, schiebt den Stop auf den Mindestabstand, schickt die Order und prüft nach 8 Sekunden, ob die Position wirklich im Depot steht.
 
-Die Signale für Rohstoffe kommen aus Tageskerzen. Sie ändern sich im Lauf eines Tages kaum, deshalb liefert jeder Scan meist dieselben Kandidaten.
+Zu jedem beratenen Markt kommt eine Meldung „🏛️ GREMIUM: …“ mit jeder Stimme und Begründung (Abschnitt 10). Pro beratenem Markt fallen 11 KI-Aufrufe für die Mitglieder und einer für den Vorsitz an. Das Gremium handelt deutlich seltener als der alte Ablauf; mehrere Mitglieder (Buffett, Graham, Kiyosaki) sind sehr vorsichtig.
+
+**Glaubwürdigkeit.** Jede BUY- oder SELL-Stimme misst der Bot nach `GREMIUM_BEWERTUNG_STD` Stunden (24) am Kurs: richtig, wenn der Kurs mehr als ein Viertel der Tagesspanne (mindestens 0,1 %) in Stimmrichtung lief, falsch, wenn genauso weit dagegen, sonst zählt sie nicht. BEKLE wird nicht bewertet. Das Gewicht eines Mitglieds liegt zwischen 0,5 und 1,5 und startet bei 1,0; wenige Treffer bewegen es kaum. `/gremium` zeigt die Gewichte. `GREMIUM_GEWICHTUNG=false` schaltet das aus.
+
+**Alter Ablauf.** Mit `GREMIUM_MODUS=regeln` arbeitet der Bot wie bis v15.24: fünf feste Regeln (Gate-Keeper) und eine große Gemini-Analyse. Seit v16.0 bekommt die KI dabei bis zu 20000 Zeichen aus `mentor_name.txt` statt nur der ersten 3000.
 
 ### Was bei einer schon offenen Position passiert
 
@@ -241,6 +247,8 @@ Mit `AUTO_EXIT=false` schließt der Exit-Monitor nicht selbst, sondern schickt n
 
 ## 9. KI-Anbieter
 
+Im Gremium (Standard ab v16.0) fragt der Bot die 11 Mitglieder über die Kette aus `PROVIDER_ORDER` (Gemini, Groq, Qwen, Nvidia, Ollama) und den Vorsitz über Claude (unten). Die folgenden Absätze über Hauptanalyse und Ersatzbetrieb gelten für den alten Ablauf (`GREMIUM_MODUS=regeln`) und für `/status`.
+
 Die Hauptanalyse macht Gemini. Liefert Gemini nichts, übernimmt ein Ersatz-Anbieter, der aber nur die vom Gate-Keeper freigegebenen Kandidaten in TRADE-Zeilen fassen darf.
 
 ### Gemini-Modellkette
@@ -287,9 +295,41 @@ Vor dem Schreiben legt der Bot die Sicherung `.env.modelupdate.bak` an. Danach l
 - **Kosten:** Jede Prüfung kostet bei Groq und Nvidia einen kurzen Aufruf, bei einem Wechsel bis zu sechs weitere.
 - **Denk-Text:** Was ein Modell zwischen `<think>` und `</think>` schreibt, entfernt der Bot aus der Antwort.
 
+### Vorsitz über Claude Code (ab v16.0)
+
+Die 11 Mitglieder fragt der Bot über die Gratis-Kette aus `PROVIDER_ORDER`. Den Vorsitz fragt er standardmäßig über die Claude Code CLI (`claude -p`) mit deinem eigenen Claude-Abo, Modell Sonnet oder besser (`CLAUDE_MODELL=sonnet` oder `opus`; `haiku` hebt der Bot auf `sonnet` an). Der Aufruf läuft ohne Werkzeuge, ohne gespeicherte Sitzung, in einem leeren Ordner und ohne die Schlüssel aus der `.env`; das Dossier geht über die Standardeingabe.
+
+Einrichten auf dem Raspberry Pi, als derselbe Benutzer, unter dem der Dienst läuft:
+
+1. Voraussetzungen laut Anthropic: 64-Bit-System (ARM64), mindestens 4 GB RAM, ein Claude-Abo Pro oder Max (der Gratis-Plan enthält Claude Code nicht).
+2. Installieren: `curl -fsSL https://claude.ai/install.sh | bash`, danach `claude --version`.
+3. Anmelden: einmal `claude` starten und dem Anmelde-Link folgen (oder `claude auth login`). Prüfen mit `claude auth status`.
+4. Findet der Dienst die CLI nicht (der Dienst kennt `~/.local/bin` oft nicht), den Pfad aus `which claude` als `CLAUDE_CLI` in die `.env` schreiben.
+5. Bot neu starten, dann `/gremium test` senden. Erwartet: „✅ Vorsitz Claude sonnet: antwortet (…s)“.
+
+Die Aufrufe zählen gegen die Nutzungsgrenzen deines Abos (ein Aufruf je Beschluss mit Mehrheit). Fällt Claude aus (nicht installiert, abgemeldet, Zeitüberschreitung nach `CLAUDE_TIMEOUT` Sekunden), gibt es keinen Trade. Mit `GREMIUM_VORSITZ_ERSATZ=true` entscheidet dann die Gratis-Kette; mit `GREMIUM_VORSITZ=kette` entscheidet sie immer.
+
+**Gratis-Kontingent.** Ein beratener Markt braucht rund 12 Aufrufe und 20 000 bis 25 000 Tokens. Die Gratis-Stufen haben Grenzen pro Minute und pro Tag (bei Groq unter anderem Tokens pro Minute). Darum fragt der Bot die Mitglieder nacheinander (`GREMIUM_PARALLEL=1`) und wartet höchstens `GREMIUM_FRIST` Sekunden auf alle Stimmen. Fehlen danach zu viele Antworten, ist das Gremium nicht beschlussfähig und es gibt keinen Trade. Ob das oft passiert, zeigt `/diagnose` in der Zeile „Gremium (… Tage)“.
+
 ## 10. Meldungen verstehen
 
 Die Tabellen nennen den Anfang der Meldung, wie er in dieser Sprache im Chat steht. „…“ steht für Werte wie Symbol, Kurs oder Uhrzeit.
+
+### Gremium-Bericht (ab v16.0)
+
+| Zeile | Bedeutung |
+| --- | --- |
+| „🏛️ GREMIUM: …“ | Kopf: Symbol, Kurs, Python-Signal mit Stärke |
+| „🟢 / 🔴 / ⚪ Name: BUY / SELL / BEKLE (70) - …“ | Stimme eines Mitglieds mit Sicherheit und Begründung |
+| „⚫ Name: keine Antwort“ | Der KI-Aufruf kam nicht zurück oder die Antwort war unbrauchbar; zählt nicht |
+| „Gewichtet: BUY … · SELL … · BEKLE … (Mehrheit ab …, Antworten …/11)“ | Gewichtete Summen und Zahl gültiger Antworten |
+| „✅ Beschluss: …“ | Mehrheit für diese Richtung |
+| „👔 Vorsitz (Claude sonnet): ausführen - …“ | Der Vorsitz gibt den Beschluss frei; danach laufen die Sperren aus Abschnitt 8 |
+| „👔 Vorsitz …: gestoppt - …“ | Der Vorsitz hat mit Begründung gestoppt; kein Trade |
+| „👔 Vorsitz …: keine Antwort - kein Trade“ | Claude nicht erreichbar; `/gremium test` |
+| „⏸️ Nicht beschlussfähig: nur … von 11 Antworten“ | Zu wenige Mitglieder haben geantwortet (Kontingent, Netz); kein Trade |
+| „⏸️ Kein Trade: Gremium gespalten (… BUY, … SELL) - Senaryo 4“ | Mindestens je 3 Stimmen für beide Richtungen |
+| „⏸️ Keine Mehrheit - kein Trade“ | Keine Richtung hat die Mehrheit erreicht |
 
 ### Rund um einen Scan
 
@@ -360,10 +400,30 @@ Die Datei liegt neben `nexus_ceo.py`. Änderungen wirken nach einem Neustart. Ko
 | `MAX_POSITIONEN` | 5 | Höchstzahl offener Positionen |
 | `MAX_JE_GRUPPE` | 2 | Höchstens so viele Märkte je Gruppe gleichzeitig offen; 0 = aus |
 | `MAX_SPREAD` | 0.5 | Höchster Spread als Preisabstand (Ask minus Bid), kein Prozentwert; leer = kein Limit |
-| `GREMIUM_MIN_JA` | 4 | Nötige JA-Stimmen von 5 |
+| `GREMIUM_MIN_JA` | 4 | Nur bei `GREMIUM_MODUS=regeln`: nötige JA-Stimmen der 5 alten Regeln |
 | `GREMIUM_MIN_JA_KRYPTO` | 3 | Dasselbe für Krypto |
 | `KRYPTO_NACHT_SPERRE` | false | true = Krypto von 23 bis 6 Uhr gesperrt |
 | `AUTO_EXIT` | false | true = Exit-Monitor schließt selbst; false = nur Empfehlung |
+
+### Gremium (ab v16.0)
+
+| Eintrag | Standard | Bedeutung |
+| --- | --- | --- |
+| `GREMIUM_MODUS` | ki | `ki` = Gremium mit 11 Mentoren; `regeln` = alter Ablauf (v15) |
+| `GREMIUM_MEHRHEIT` | 6 | Gewichtete Stimmen von 11 für einen Beschluss |
+| `GREMIUM_MEHRHEIT_KRYPTO` | 5 | Dasselbe für Krypto am Wochenende |
+| `GREMIUM_MIN_ANTWORTEN` | 8 | Weniger gültige Antworten = nicht beschlussfähig |
+| `GREMIUM_MAX_KANDIDATEN` | 2 | Höchstens so viele Märkte berät das Gremium je Scan (je Markt rund 12 KI-Aufrufe) |
+| `GREMIUM_GUELTIG_STD` | 4 | So viele Stunden wird ein beratener Markt nicht erneut beraten |
+| `GREMIUM_PARALLEL` | 1 | Gleichzeitige KI-Aufrufe; 1 schont die Minuten-Limits der Gratis-Anbieter |
+| `GREMIUM_FRIST` | 420 | Sekunden für alle 11 Stimmen zusammen; wer bis dahin nicht antwortet, zählt als keine Antwort |
+| `GREMIUM_BEWERTUNG_STD` | 24 | Nach so vielen Stunden wird jede Stimme am Kurs gemessen |
+| `GREMIUM_GEWICHTUNG` | true | Glaubwürdigkeit als Gewicht nutzen; false = alle 1,0 |
+| `GREMIUM_VORSITZ` | claude | `claude` = Claude Code CLI mit deinem Abo; `kette` = Gratis-Kette |
+| `CLAUDE_MODELL` | sonnet | `sonnet` oder `opus` (oder ein voller Modellname); `haiku` wird auf `sonnet` angehoben |
+| `CLAUDE_CLI` | claude | Name oder voller Pfad der CLI, z. B. `/home/benutzer/.local/bin/claude` |
+| `CLAUDE_TIMEOUT` | 180 | Sekunden, die der Bot auf den Vorsitz wartet |
+| `GREMIUM_VORSITZ_ERSATZ` | false | true = fällt Claude aus, entscheidet die Gratis-Kette; false = kein Trade |
 
 ### Stop Loss, Gewinnmitnahme, Sperren
 
@@ -429,20 +489,24 @@ Die Merker-Dateien schreibt der Bot selbst; bearbeite sie nicht von Hand, solang
 | `depot_dd_tracker.json` | Tageshoch des Depots und Tages-Verlust-Stopp | Ja; hebt den Stopp für heute auf |
 | `daily_tp_state.json` | Welche Tagesziel-Fragen schon gestellt wurden | Ja |
 | `nexus_lang_missing.log` | Texte, für die es keine Übersetzung gab | Ja |
+| `nexus_gremium.py` | Gremium: Rollenkarten, Abstimmung, Zählung, Vorsitz | Nein; ohne sie läuft der alte Ablauf und das Log meldet einen Fehler |
+| `nexus_gremium.db` | Stimmen und Beschlüsse des Gremiums, daraus die Glaubwürdigkeit | Ja; die Gewichte beginnen dann wieder bei 1,0 |
+| `docs/GREMIUM.md` | Die Rollenkarten zum Lesen, erzeugt aus `nexus_gremium.py` | Ja |
 
 ### Listen aus GitHub
 
-Drei Listen lädt der Bot bei Bedarf aus dem öffentlichen Repository `KhungFu/kisilerim`, nicht aus dem eigenen Ordner: `mentor_name.txt` (Handels-Doktrin; die ersten 3000 Zeichen gehen in den KI-Auftrag), `toplam_egitim.txt` und `Abfrage_Quellen.txt` (Nachrichtenseiten und X-Konten für die Nachrichtensammlung). Jede Installation benutzt damit dieselben Listen. Ist GitHub nicht erreichbar, arbeitet der Bot ohne sie weiter. Gepflegt werden die Listen im Repository `nexus`; `kisilerim` holt sie von dort einmal pro Stunde.
+Drei Listen lädt der Bot bei Bedarf aus dem öffentlichen Repository `KhungFu/kisilerim`, nicht aus dem eigenen Ordner: `mentor_name.txt` (Handels-Doktrin; im alten Ablauf gehen bis zu 20000 Zeichen in den KI-Auftrag, das Gremium nutzt die Rollenkarten aus `nexus_gremium.py`), `toplam_egitim.txt` und `Abfrage_Quellen.txt` (Nachrichtenseiten und X-Konten für die Nachrichtensammlung). Jede Installation benutzt damit dieselben Listen. Ist GitHub nicht erreichbar, arbeitet der Bot ohne sie weiter. Gepflegt werden die Listen im Repository `nexus`; `kisilerim` holt sie von dort einmal pro Stunde.
 
 ## 13. Update und Rollback
 
-Ein Update besteht aus `nexus_ceo.py`, `nexus_lang.py` und `nexus_diagnose.py`. Die drei gehören zusammen; die Befehle unten gelten für jede der Dateien.
+Ein Update besteht aus `nexus_ceo.py`, `nexus_lang.py`, `nexus_diagnose.py` und ab v16.0 `nexus_gremium.py`. Die vier gehören zusammen und liegen im selben Ordner; die Befehle unten gelten für jede der Dateien.
 
 ```bash
 cp nexus_ceo.py nexus_ceo.py.bak
 cp nexus_lang.py nexus_lang.py.bak
+cp nexus_gremium.py nexus_gremium.py.bak 2>/dev/null
 # neue Dateien in den Ordner kopieren, dann:
-python3 -m py_compile nexus_ceo.py && python3 nexus_lang.py && sudo systemctl restart nexus_ceo.service
+python3 -m py_compile nexus_ceo.py nexus_gremium.py && python3 nexus_lang.py && sudo systemctl restart nexus_ceo.service
 ```
 
 Der Neustart läuft nur, wenn beide Dateien fehlerfrei sind. In der Startmeldung die Version prüfen.
@@ -455,6 +519,8 @@ cp nexus_lang.py.bak nexus_lang.py
 sudo systemctl restart nexus_ceo.service
 ```
 
+Nur das Gremium abschalten, ohne alte Dateien: `GREMIUM_MODUS=regeln` in die `.env`, dann neu starten.
+
 Merker-Dateien bleiben bei Updates erhalten. Handelssperren gehen bei jedem Neustart verloren.
 
 ## 14. Fehlersuche
@@ -465,7 +531,7 @@ Merker-Dateien bleiben bei Updates erhalten. Handelssperren gehen bei jedem Neus
 | Bot antwortet nur mit einer Chat-ID | `MY_CHAT_ID` ist leer | Zahl in die `.env` eintragen, neu starten |
 | Bot antwortet gar nicht | Dienst gestoppt, Token falsch, oder du schreibst aus einem anderen Chat als `MY_CHAT_ID` | Status prüfen; `TG_TOKEN` und `MY_CHAT_ID` prüfen |
 | Nachrichten kommen in der falschen Sprache oder gemischt | `BOT_LANGUAGE` falsch, `nexus_lang.py` fehlt, oder für einen Text gibt es keine Regel | `/sprache` senden; `nexus_lang_missing.log` ansehen |
-| Der Bot eröffnet nichts | Eine Sperre greift, oder der Gate-Keeper findet keinen Kandidaten | Meldung „🔔 Scan ohne neuen Trade:“ lesen; `/position`, `/verluste`, `/sperren`; am Wochenende nur Krypto |
+| Der Bot eröffnet nichts | Eine Sperre greift, das Gremium findet keine Mehrheit, ist nicht beschlussfähig oder der Vorsitz stoppt | Meldung „🔔 Scan ohne neuen Trade:“ lesen; `/position`, `/verluste`, `/sperren`; am Wochenende nur Krypto |
 | „INFO … \| Gemini-Quota erschöpft → weiter mit Groq“ bei jedem Scan | Keys abgelehnt, Tageslimit erreicht oder zu viele Scans für das Gratis-Kontingent | `/update_models`; abgelehnte Keys ersetzen; Scan-Intervall verlängern |
 | Im Log steht bei jedem Scan `Groq key 1 hata: ...` (oder Qwen, Nvidia) | Modell beim Anbieter abgeschaltet, Key abgelehnt oder Limit erreicht | `/update_models` zeigt Modell, Kette und Sperren; `/diagnose` nennt die häufigste Fehlermeldung je Anbieter |
 | Stufen werden nicht verkauft | Hedging-Modus im Konto an, `MIRROR_TP_ENABLED=false`, oder Stunden-ATR nicht abrufbar | Hedging ausschalten; `.env` prüfen |
@@ -473,6 +539,8 @@ Merker-Dateien bleiben bei Updates erhalten. Handelssperren gehen bei jedem Neus
 | Positionsbericht warnt vor dem Tagesrauschen | Stop liegt näher als der Mindestabstand | `/sl_weiten`, dann `/sl_weiten ja` |
 | Position ohne Meldung verschwunden | Schließ-Meldung kommt erst mit dem nächsten 5-Minuten-Lauf | Warten; sonst die Historie in der Capital-App ansehen |
 | „⚠️ NEXUS NATURE v12.0: API-Verbindungsfehler! Neuer Versuch... (Durchlauf #…)“ | Capital.com nicht erreichbar oder Login abgelehnt | Zugangsdaten in der `.env` prüfen, neu starten |
+| „👔 Vorsitz …: keine Antwort - kein Trade“ | Claude Code nicht installiert, nicht angemeldet oder vom Dienst nicht gefunden | `/gremium test`; im Terminal `claude auth status`; `CLAUDE_CLI` mit vollem Pfad setzen (Abschnitt 9) |
+| Oft „Nicht beschlussfähig“ | Gratis-Kontingent der Mitglieder erschöpft (Minuten- oder Tageslimit) | `/diagnose`; weitere Keys, `GREMIUM_MAX_KANDIDATEN=1`, längeres `SCAN_INTERVAL_SEC` |
 | Symbol unbekannt | Symbol fehlt in `capital_markets_config.py` oder in der eingebauten Liste | Symbol mit Epic und Mindestgröße in `capital_markets_config.py` eintragen, neu starten |
 
 Nützliche Log-Abfragen:
@@ -487,6 +555,9 @@ grep -E "Gemini .*: (tot|tageslimit|key|keytot|modell|abbruch)|\[OK\]" nexus_ceo
 # Was wurde abgelehnt?
 grep -E "MAX POSITIONEN|Wiedereinstieg|HARD BLOK|SPREAD BLOK|KAPALI|FALLBACK-BLOCK|unplausibel" nexus_ceo.log | tail -40
 
+# Was hat das Gremium beschlossen, und warum nicht gehandelt?
+grep -E "GREMIUM|Claude-Vorsitz" nexus_ceo.log | tail -40
+
 # Fehler
 grep -E "ERROR|Traceback" nexus_ceo.log | tail -20
 ```
@@ -498,9 +569,13 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 ### Fehler und Eigenheiten im Code
 
 - **Halbierung nur für vier Coins.** Halbiert wird bei BTC, ETH, SOL und XRP. Andere Coins laufen mit voller Größe.
-- **Zwölf Coins gelten nicht als Krypto.** Der Bot erkennt Krypto an einer festen Namensliste. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX und XTZ aus der mitgelieferten Marktliste stehen nicht darauf. Für sie gelten die Regeln für Rohstoffe: 4 von 5 Gremium-Stimmen und kein Handel am Wochenende.
+- **Zwölf Coins gelten nicht als Krypto.** Der Bot erkennt Krypto an einer festen Namensliste. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX und XTZ aus der mitgelieferten Marktliste stehen nicht darauf. Für sie gelten die Regeln für Rohstoffe: Mehrheit 6 von 11 und kein Handel am Wochenende.
 - **Korrelation wird nur grob geprüft.** Das Gruppen-Limit zählt Märkte je Gruppe, nicht Richtung oder Größe. Öl und Kupfer liegen in verschiedenen Gruppen, auch wenn sie oft gemeinsam laufen.
-- **Ab 5 Positionen wirkt kein Gegensignal.** Bei 5 oder mehr offenen Positionen bricht der Bot vor jeder Prüfung ab. Ein Gegensignal schließt dann auch keine bestehende Position.
+- **Ab `MAX_POSITIONEN` nur noch Ausstiege.** Bei vollem Depot eröffnet der Bot nichts Neues und stockt nicht auf; ein Gegensignal schließt eine offene Position aber weiterhin (bis v15.24 brach er vorher ab).
+- **Die Mentoren sind Nachbildungen.** Die Rollenkarten fassen die veröffentlichten Grundsätze der Personen zusammen; es antworten KI-Modelle, nicht die Personen. Gratis-Modelle halten sich nicht immer an ihre Rolle.
+- **Die Glaubwürdigkeit braucht Zeit.** Erst nach einigen Wochen bewerteter Stimmen unterscheiden sich die Gewichte spürbar. Gemessen wird die Kursbewegung nach 24 h, nicht das Ergebnis eines Trades.
+- **Der Vorsitz kann nur stoppen.** Er kann keine Richtung erzwingen und keinen Markt vorschlagen, über den das Gremium nicht beraten hat.
+- **Kontingent.** Mit Gratis-Anbietern fallen Mitglieder bei Limits aus; dann handelt der Bot nicht, statt mit halben Informationen zu handeln.
 - **Statistik und Tagesziel aus der Bot-Datenbank sind unvollständig.** Die Datenbank kennt nur Schließungen, die der Bot selbst ausgelöst hat. Maßgeblich ist die Auswertung in der Capital-App.
 - **Der manuelle Trade** nutzt weder den Rausch-Schutz noch `MAX_POSITION_EUR`.
 - **Handelssperre per Text wirkt nicht.** Die Tabelle, die Wörter wie „gold“ einem Symbol zuordnet, wird weiter unten im Code von einer zweiten Tabelle gleichen Namens (`ASSET_KEYWORDS`, für die Nachrichten) überschrieben. Der Bot erkennt deshalb in keinem Satz ein Symbol und setzt nie eine Sperre. Der Fehler ist absichtlich nicht behoben: Mit der Reparatur würde ein Satz mit „sell“, „close“, „verkaufen“ oder „kapat“ und einem Symbolnamen sofort die Positionen dieses Symbols schließen.
@@ -580,8 +655,10 @@ Werte stammen aus `capital_markets_config.py` bzw. der Diagnose und schwanken im
 - **ATR** – durchschnittliche Tagesspanne (Average True Range); Basis für Stop und Stufen.
 - **Breakeven** – Stop wird auf den Einstieg gezogen, sobald +1 % erreicht sind.
 - **CFD** – Differenzkontrakt; Hebelprodukt, Totalverlust des Einsatzes möglich.
-- **Gate-Keeper** – Vorprüfung (Spread, Sperren, Limits) vor dem Gremium.
-- **Gremium** – fünf KI-Mentoren; 4 von 5 JA nötig (Krypto 3 von 5).
+- **Gate-Keeper** – technische Vorprüfung des alten Ablaufs (`GREMIUM_MODUS=regeln`).
+- **Gremium** – 11 Mentoren, jeder ein eigener KI-Aufruf; Mehrheit 6 von 11 (Krypto am Wochenende 5), danach prüft der Vorsitz.
+- **Glaubwürdigkeit** – Gewicht eines Mitglieds (0,5 bis 1,5) aus seinen bewerteten Stimmen.
+- **Vorsitz** – prüft den Mehrheitsbeschluss gegen die Daten und darf ihn stoppen, nicht umdrehen; Standard Claude über `claude -p`.
 - **Kara Kuğu** – Schutzregel gegen plötzliche Extremereignisse („Schwarzer Schwan").
 - **Mirror-TP** – Teilverkauf in drei Stufen (je 25 %) bei 0,5 / 1,0 / 1,5 × Stunden-ATR.
 - **Schutz-Schleife** – prüft alle 5 Minuten die offenen Positionen.

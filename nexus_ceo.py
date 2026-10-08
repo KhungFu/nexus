@@ -863,7 +863,8 @@ GREMIUM_MEHRHEIT_KRYPTO = _env_zahl("GREMIUM_MEHRHEIT_KRYPTO", 5)  # Krypto am W
 GREMIUM_MIN_ANTWORTEN  = _env_zahl("GREMIUM_MIN_ANTWORTEN", 8, int)   # weniger gueltige Antworten = nicht beschlussfaehig
 GREMIUM_MAX_KANDIDATEN = _env_zahl("GREMIUM_MAX_KANDIDATEN", 2, int)  # so viele Maerkte beraet das Gremium je Scan hoechstens
 GREMIUM_GUELTIG_STD    = _env_zahl("GREMIUM_GUELTIG_STD", 4)       # ein Beschluss gilt so viele Stunden (kein neues Beraten desselben Markts)
-GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 2, int)     # gleichzeitige KI-Aufrufe
+GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 1, int)     # gleichzeitige KI-Aufrufe (1 = nacheinander, schont die Minuten-Limits der Gratis-Anbieter)
+GREMIUM_FRIST          = _env_zahl("GREMIUM_FRIST", 420, int)      # Sekunden fuer alle 11 Stimmen zusammen; wer bis dahin nicht antwortet, zaehlt als keine Antwort
 GREMIUM_BEWERTUNG_STD  = _env_zahl("GREMIUM_BEWERTUNG_STD", 24)    # nach so vielen Stunden wird jede Stimme am Kurs gemessen
 GREMIUM_GEWICHTUNG     = os.getenv("GREMIUM_GEWICHTUNG", "true").split("#")[0].strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
 # Vorsitz: claude = Claude Code CLI (claude -p) mit deinem Claude-Abo; kette = dieselbe KI-Kette wie die Mitglieder
@@ -10087,7 +10088,7 @@ def gremium_zyklus():
                 logging.info(f"GREMIUM {sym}: Spread {info['spread']} > MAX_SPREAD {MAX_SPREAD} - nicht beraten")
                 continue
             t0 = time.time()
-            stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL)
+            stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST)
             mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
             erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN)
             vs = None

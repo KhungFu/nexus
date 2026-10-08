@@ -1,6 +1,6 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.24)
+# NEXUS CEO – Kullanım Kılavuzu (v16.0)
 
-NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.24 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
+NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v16.0 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
 Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
@@ -61,7 +61,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | Komut | Düğme | Ne olur |
 | --- | --- | --- |
 | `/pozisyon` | 📍 Pozisyon | Pozisyon raporu: her pozisyon için büyüklük, giriş, fiyat, Stop Loss, Take Profit, günlük aralık, günlük hedef, günlük aralık cinsinden stop mesafesi ve durumlarıyla Mirror-TP kademeleri |
-| `/status` | 📊 Status | Kurul oylamasıyla tam yapay zekâ analizi. Bir Gemini isteği harcar |
+| `/status` | 📊 Status | Eski akıştaki (v15) gibi tam Gemini analizi. Kurul bunun için toplanmaz. Bir Gemini isteği harcar |
 | `/sinyaller` | 📈 Sinyaller | Teknik sinyaller (MA 9/26, ADX, RSI) |
 | `/stats` | 🧮 Stats | Bot veritabanından işlem istatistiği ve varlık başına sonuç |
 | `/kayip` | 💸 Kayip | Sembol başına bugünün kayıp sayacı |
@@ -70,6 +70,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | `/update_models` | – | Yapay zekâ modellerini kontrol et: Gemini zinciri ve reddedilen anahtarlar, ayrıca Groq, Qwen ve Nvidia için model, zincir ve engeller. `/update_models best`, kontrolü geçen en büyük modele geçer |
 | `/teshis` | 🔎 Teşhis | Son 7 günün teşhisi: özet mesaj olarak, tam rapor metin dosyası olarak. `/teshis 3` = yalnızca 3 gün. Yalnızca okur |
 | `/kilavuz` | – | Tam kılavuz, kendi dilinde dosya olarak; sonunda botun şu anda çalıştığı ayarlar. `/kilavuz tr` = Türkçe, `de` = Almanca, `en` = İngilizce. Dosya botun yanında yoksa GitHub'dan indirir |
+| `/kurul` | – | Kurul: 11 mentorun güvenilirliği (ağırlık, doğru/yanlış) ve son kararlar. `/kurul test` başkanın (Claude) yanıt verip vermediğini denetler |
 | `/dil` | – | Dil seç |
 | `/yardim` | 📋 Menü | Komut özeti |
 
@@ -79,7 +80,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | --- | --- |
 | `/kapat GOLD` | Bu sembolün tüm pozisyonlarını hemen kapatır |
 | `/kapat HEPSI` | Onay ister; tüm pozisyonları gerçekten kapatan ancak `/kapat HEPSI ONAYLA` komutudur |
-| `/manuel GOLD BUY 100` | Gate-Keeper ve Kurul olmadan hemen 100 EUR'luk bir pozisyon açar. Stop ve hedefi bot kendisi belirler |
+| `/manuel GOLD BUY 100` | Kurul olmadan hemen 100 EUR'luk bir pozisyon açar. Stop ve hedefi bot kendisi belirler |
 | `/manuel GOLD BUY 100 1900 2100` | Aynısı, kendi Stop Loss (1900) ve Take Profit (2100) değerlerinle |
 | `/sl_genislet` | Açık pozisyonların hangi stop'larının günlük gürültü içinde kaldığını gösterir. Hiçbir şeyi değiştirmez |
 | `/sl_genislet evet` | Bu stop'ları asgari mesafeye çeker. Yalnızca uzaklaştırır, asla yaklaştırmaz; Take Profit aynı kalır |
@@ -108,13 +109,18 @@ Eğik çizgi olmadan yazdığın her şeyi bot, yapay zekâ analizi için not ol
 Bot taramalar hâlinde işlem yapar. İki tarama arasında `SCAN_INTERVAL_SEC` saniye vardır (varsayılan 21600, yani 6 saat). Bir tarama şöyle ilerler:
 
 1. **Karşılaştırma.** Bot durum kayıtlarını Capital.com'daki açık pozisyonlarla karşılaştırır ve günlük kayıp durdurmasını denetler.
-2. **Gate-Keeper.** Python her sembol için beş teknik puan hesaplar: MA 9/26 kesişimi, 15'in üzerinde ADX, yöne uygun RSI, Bollinger konumu, bir Fibonacci seviyesine yakınlık. Emtialar altıncı bir puan alabilir (Rogers filtresi, EMA 50/200). Yalnızca en az 5 puanı olan sembol devam eder. Böylece kripto 5 üzerinden 5 puana ihtiyaç duyar.
-3. **Kurul.** Beş sabit kural seti (Cihat, Rogers, Dalio, Taleb, Soros) EVET ya da HAYIR oyu verir. 5 oydan 4'ü gerekir, kriptoda 5 oydan 3'ü.
-4. **Yapay zekâ analizi.** Gemini adayları haberler, hava durumu ve makro verileriyle birlikte alır ve TRADE satırlarıyla yanıt verir. Gemini yanıt vermezse bir yedek sağlayıcı yalnızca Gate-Keeper'ın onayladığı adayları biçimlendirir.
-5. **Emir öncesi denetimler.** Her TRADE satırı bölüm 8'deki kilitlerden geçer. Yedek modda yalnızca Gate-Keeper'ın bu taramada onayladığı sembol ve yön geçebilir.
-6. **Emir.** Bot büyüklüğü kendisi hesaplar, stop'u asgari mesafeye çeker, emri gönderir ve 8 saniye sonra pozisyonun gerçekten hesapta olup olmadığını denetler.
+2. **Adaylar.** Python `capital_markets_config.py` içindeki tüm piyasalara bakar (v15.24'e kadar hafta içi tarama 15 piyasadan sonra duruyordu). Teknik sinyal (günlük mumlarda MA 9/26, ADX, RSI; kriptoda 20 dk / 45 dk / 2 sa) yalnızca bir dikkat süzgecidir: BUY ya da SELL sinyali ve en az 2 gücü olan piyasa aday olur. Zaten engellenecek piyasalar önceden elenir: hafta sonu ve kripto değil, `MAX_POSITIONEN` dolu (o zaman yalnızca açık pozisyonlardan çıkış), grup dolu, günün kayıpları, işlem engeli, piyasa kapalı, `MAX_SPREAD` üzerinde spread, yeniden giriş kilidi, pyramiding izni olmadan ekleme ve Kurulun son `GREMIUM_GUELTIG_STD` saatte zaten görüştüğü piyasalar. Teknik skora göre en iyi `GREMIUM_MAX_KANDIDATEN` aday devam eder.
+3. **Dosya.** Python her aday için gerçek verilerle bir dosya hazırlar: fiyat ve spread, günlük aralık (ATR), günlük teknik (EMA 20/50/200, 5/20/60 gündeki değişim, son 210 günün aralığı, RSI), Python sinyali, 4 saatlik teknik (kripto hariç), grubun temel verileri (EIA petrol stokları; petrol, altın ve gümüş için COT; buğday, kahve ve kakao için USDA; hava durumu), makro (rejim, Fear & Greed, DXY, FRED), bir sonraki büyük olay, veritabanından varlıkla ilgili haberler (7 gün), hesap ve açık pozisyonlar, bugünkü kayıplar ve son kapanışlar.
+4. **Kurul.** `mentor_name.txt` içindeki 11 mentor (Çiçek, Dalio, Kiyosaki, Graham, Buffett, Sander, Kostolany, Lynch, Taleb, Munger, Druckenmiller) aynı dosyayı alır; her biri `PROVIDER_ORDER` zincirinden kendi yapay zekâ çağrısında, kendi rol kartıyla. Hiçbiri diğerlerinin oyunu görmez. Her biri BUY, SELL ya da BEKLE (işlem yapma), 0 ile 100 arasında bir güven ve bir gerekçeyle yanıt verir. CFD onlar için yalnızca bir araçtır: piyasayı, emtianın kendisini alıyor ya da ona karşı bahse giriyormuş gibi değerlendirirler. Rol kartları `docs/GREMIUM.md` içindedir.
+5. **Sayım.** Python oyları güvenilirliğe göre ağırlıklandırarak sayar (aşağıya bak). Bir karar için 11 üzerinden `GREMIUM_MEHRHEIT` ağırlıklı oy gerekir (varsayılan 6), hafta sonu kripto için `GREMIUM_MEHRHEIT_KRYPTO` (5). `GREMIUM_MIN_ANTWORTEN` (8) altında geçerli yanıt: karar yeter sayısı yok. 3 ya da daha fazla BUY ve aynı anda 3 ya da daha fazla SELL oyu varsa işlem yapılmaz (`mentor_name.txt` içindeki Senaryo 4). Çoğunluk Python sinyaline karşı da karar verebilir.
+6. **Başkan.** Çoğunluk varsa başkan kararı verilere karşı denetler: UYGULA ya da BEKLE (durdur). Yönü değiştiremez. Stop ve hedef önerir; fiyatın yanlış tarafındaysa Python bunları günlük aralıktan alır. Varsayılan, Claude abonelinle Claude Code CLI üzerinden Claude'dur (bölüm 9). Başkan yanıt vermezse işlem yapılmaz.
+7. **Denetimler ve emir.** Yalnızca Kurulun karar verdiği sembol ve yön uygulanabilir. Satır bölüm 8'deki tüm kilitlerden geçer. Bot büyüklüğü kendisi hesaplar, stop'u asgari mesafeye çeker, emri gönderir ve 8 saniye sonra pozisyonun gerçekten hesapta olup olmadığını denetler.
 
-Emtia sinyalleri günlük mumlardan gelir. Gün içinde pek değişmezler; bu yüzden her tarama çoğunlukla aynı adayları verir.
+Görüşülen her piyasa için her oyu ve gerekçesini içeren bir "🏛️ KURUL: …" mesajı gelir (bölüm 10). Görüşülen her piyasa üyeler için 11, başkan için 1 yapay zekâ çağrısı harcar. Kurul eski akıştan çok daha seyrek işlem yapar; birkaç üye (Buffett, Graham, Kiyosaki) çok temkinlidir.
+
+**Güvenilirlik.** Bot her BUY ya da SELL oyunu `GREMIUM_BEWERTUNG_STD` saat (24) sonra fiyatla ölçer: fiyat oy yönünde günlük aralığın dörtte birinden (en az %0,1) fazla gittiyse doğru, aynı kadar ters gittiyse yanlış, aksi hâlde sayılmaz. BEKLE değerlendirilmez. Bir üyenin ağırlığı 0,5 ile 1,5 arasındadır ve 1,0'dan başlar; birkaç isabet onu pek oynatmaz. `/kurul` ağırlıkları gösterir. `GREMIUM_GEWICHTUNG=false` bunu kapatır.
+
+**Eski akış.** `GREMIUM_MODUS=regeln` ile bot v15.24'teki gibi çalışır: beş sabit kural (Gate-Keeper) ve tek bir büyük Gemini analizi. v16.0'dan beri yapay zekâ orada `mentor_name.txt` dosyasından yalnızca ilk 3000 değil, 20000 karaktere kadar alır.
 
 ### Zaten açık bir pozisyon varsa ne olur
 
@@ -239,6 +245,8 @@ Bu kuralları Python kendisi denetler; hiçbir yapay zekâ onları aşamaz. “K
 
 ## 9. Yapay zekâ sağlayıcıları
 
+Kurulda (v16.0'dan itibaren varsayılan) bot 11 üyeyi `PROVIDER_ORDER` zinciriyle (Gemini, Groq, Qwen, Nvidia, Ollama), başkanı ise Claude ile (aşağıda) sorar. Ana analiz ve yedek mod hakkındaki sonraki paragraflar eski akış (`GREMIUM_MODUS=regeln`) ve `/status` için geçerlidir.
+
 Ana analizi Gemini yapar. Gemini yanıt vermezse bir yedek sağlayıcı devralır; ancak o yalnızca Gate-Keeper'ın onayladığı adayları TRADE satırlarına dökebilir.
 
 ### Gemini model zinciri
@@ -285,9 +293,41 @@ Yazmadan önce bot `.env.modelupdate.bak` yedeğini oluşturur. Sonra `.env` dos
 - **Maliyet:** Her kontrol Groq ve Nvidia'da kısa bir çağrıya, model değişiminde en çok altı çağrıya daha mal olur.
 - **Düşünme metni:** Bir modelin `<think>` ile `</think>` arasına yazdıklarını bot yanıttan çıkarır.
 
+### Claude Code üzerinden başkan (v16.0'dan itibaren)
+
+Bot 11 üyeyi `PROVIDER_ORDER` içindeki ücretsiz zincirle sorar. Başkanı varsayılan olarak kendi Claude abonelinle Claude Code CLI (`claude -p`) üzerinden, Sonnet ya da daha iyi bir modelle sorar (`CLAUDE_MODELL=sonnet` ya da `opus`; bot `haiku`'yu `sonnet`'e yükseltir). Çağrı araçsız, kaydedilmiş oturum olmadan, boş bir klasörde ve `.env` içindeki anahtarlar olmadan çalışır; dosya standart girdiden gider.
+
+Raspberry Pi üzerinde, servisin çalıştığı kullanıcıyla kurulum:
+
+1. Anthropic'e göre gereksinimler: 64 bit sistem (ARM64), en az 4 GB RAM, Claude Pro ya da Max aboneliği (ücretsiz plan Claude Code içermez).
+2. Kurulum: `curl -fsSL https://claude.ai/install.sh | bash`, ardından `claude --version`.
+3. Giriş: `claude`'u bir kez başlat ve giriş bağlantısını izle (ya da `claude auth login`). `claude auth status` ile denetle.
+4. Servis CLI'yi bulamazsa (servis `~/.local/bin` klasörünü çoğu zaman bilmez), `which claude` çıktısındaki yolu `.env` içine `CLAUDE_CLI` olarak yaz.
+5. Botu yeniden başlat, sonra `/kurul test` gönder. Beklenen: "✅ Vorsitz Claude sonnet: antwortet (…s)".
+
+Çağrılar aboneliğinin kullanım sınırlarından düşer (çoğunluklu her karar için bir çağrı). Claude çalışmazsa (kurulu değil, oturum kapalı, `CLAUDE_TIMEOUT` saniye sonra zaman aşımı) işlem yapılmaz. `GREMIUM_VORSITZ_ERSATZ=true` ile bunun yerine ücretsiz zincir karar verir; `GREMIUM_VORSITZ=kette` ile her zaman o karar verir.
+
+**Ücretsiz kota.** Görüşülen bir piyasa yaklaşık 12 çağrı ve 20.000 ile 25.000 token gerektirir. Ücretsiz katmanların dakika ve gün sınırları vardır (Groq'ta başka şeylerin yanında dakikadaki token sayısı). Bu yüzden bot üyeleri sırayla sorar (`GREMIUM_PARALLEL=1`) ve tüm oylar için en fazla `GREMIUM_FRIST` saniye bekler. Bundan sonra çok fazla yanıt eksikse Kurulun karar yeter sayısı yoktur ve işlem yapılmaz. Bunun ne sıklıkta olduğunu `/teshis` "Kurul (… gün)" satırında gösterir.
+
 ## 10. Mesajları anlamak
 
 Tablolar, mesajın bu dilde sohbette göründüğü hâliyle başlangıcını verir. “…” sembol, fiyat veya saat gibi değerlerin yerine geçer.
+
+### Kurul raporu (v16.0'dan itibaren)
+
+| Satır | Anlamı |
+| --- | --- |
+| "🏛️ KURUL: …" | Başlık: sembol, fiyat, güçle birlikte Python sinyali |
+| "🟢 / 🔴 / ⚪ Ad: BUY / SELL / BEKLE (70) - …" | Bir üyenin güven ve gerekçeyle oyu |
+| "⚫ Ad: yanıt yok" | Yapay zekâ çağrısı geri dönmedi ya da yanıt kullanılamaz; sayılmaz |
+| "Ağırlıklı: BUY … · SELL … · BEKLE … (çoğunluk …, yanıt …/11)" | Ağırlıklı toplamlar ve geçerli yanıt sayısı |
+| "✅ Karar: …" | Bu yön için çoğunluk |
+| "👔 Başkan (Claude sonnet): uygula - …" | Başkan kararı onaylar; ardından bölüm 8'deki kilitler uygulanır |
+| "👔 Başkan …: durdurdu - …" | Başkan gerekçeyle durdurdu; işlem yok |
+| "👔 Başkan …: yanıt yok - işlem yok" | Claude'a ulaşılamıyor; `/kurul test` |
+| "⏸️ Karar yeter sayısı yok: 11 üyeden yalnızca … yanıt" | Çok az üye yanıt verdi (kota, ağ); işlem yok |
+| "⏸️ İşlem yok: kurul bölündü (… BUY, … SELL) - Senaryo 4" | Her iki yön için de en az 3 oy |
+| "⏸️ Çoğunluk yok - işlem yok" | Hiçbir yön çoğunluğa ulaşmadı |
 
 ### Taramayla ilgili
 
@@ -358,10 +398,30 @@ Dosya `nexus_ceo.py` ile aynı klasördedir. Değişiklikler yeniden başlatmada
 | `MAX_POSITIONEN` | 5 | Açık pozisyonların azami sayısı |
 | `MAX_JE_GRUPPE` | 2 | Grup başına aynı anda en fazla bu kadar açık piyasa; 0 = kapalı |
 | `MAX_SPREAD` | 0.5 | Fiyat farkı olarak en yüksek spread (Ask eksi Bid), yüzde değil; boş = limit yok |
-| `GREMIUM_MIN_JA` | 4 | 5 oydan gereken EVET oyu sayısı |
+| `GREMIUM_MIN_JA` | 4 | Yalnızca `GREMIUM_MODUS=regeln` ile: 5 eski kuraldan gereken EVET oyu |
 | `GREMIUM_MIN_JA_KRYPTO` | 3 | Aynısı kripto için |
 | `KRYPTO_NACHT_SPERRE` | false | true = kripto 23 ile 6 arası kilitli |
 | `AUTO_EXIT` | false | true = çıkış izleyicisi kendisi kapatır; false = yalnızca öneri |
+
+### Kurul (v16.0'dan itibaren)
+
+| Ayar | Varsayılan | Anlamı |
+| --- | --- | --- |
+| `GREMIUM_MODUS` | ki | `ki` = 11 mentorlu Kurul; `regeln` = eski akış (v15) |
+| `GREMIUM_MEHRHEIT` | 6 | Bir karar için 11 üzerinden ağırlıklı oy |
+| `GREMIUM_MEHRHEIT_KRYPTO` | 5 | Aynısı hafta sonu kripto için |
+| `GREMIUM_MIN_ANTWORTEN` | 8 | Daha az geçerli yanıt = karar yeter sayısı yok |
+| `GREMIUM_MAX_KANDIDATEN` | 2 | Kurulun tarama başına görüştüğü en fazla piyasa sayısı (her biri yaklaşık 12 yapay zekâ çağrısı) |
+| `GREMIUM_GUELTIG_STD` | 4 | Görüşülen bir piyasa bu kadar saat yeniden görüşülmez |
+| `GREMIUM_PARALLEL` | 1 | Aynı anda yapay zekâ çağrısı; 1 ücretsiz sağlayıcıların dakika sınırlarını korur |
+| `GREMIUM_FRIST` | 420 | 11 oyun tamamı için saniye; o zamana kadar yanıt vermeyen üye yanıt yok sayılır |
+| `GREMIUM_BEWERTUNG_STD` | 24 | Her oy bu kadar saat sonra fiyatla ölçülür |
+| `GREMIUM_GEWICHTUNG` | true | Güvenilirliği ağırlık olarak kullan; false = hepsi 1,0 |
+| `GREMIUM_VORSITZ` | claude | `claude` = aboneliğinle Claude Code CLI; `kette` = ücretsiz zincir |
+| `CLAUDE_MODELL` | sonnet | `sonnet` ya da `opus` (ya da tam model adı); `haiku` `sonnet`'e yükseltilir |
+| `CLAUDE_CLI` | claude | CLI'nin adı ya da tam yolu, örn. `/home/kullanici/.local/bin/claude` |
+| `CLAUDE_TIMEOUT` | 180 | Botun başkanı beklediği saniye |
+| `GREMIUM_VORSITZ_ERSATZ` | false | true = Claude çalışmazsa ücretsiz zincir karar verir; false = işlem yok |
 
 ### Stop Loss, kâr alma, kilitler
 
@@ -427,20 +487,24 @@ Durum dosyalarını bot kendisi yazar; bot çalışırken onları elle düzenlem
 | `depot_dd_tracker.json` | Hesabın günlük zirvesi ve günlük kayıp durdurması | Evet; bugünkü durdurmayı kaldırır |
 | `daily_tp_state.json` | Hangi günlük hedef sorularının sorulduğu | Evet |
 | `nexus_lang_missing.log` | Çevirisi bulunmayan metinler | Evet |
+| `nexus_gremium.py` | Kurul: rol kartları, oylama, sayım, başkan | Hayır; o olmadan eski akış çalışır ve log bir hata bildirir |
+| `nexus_gremium.db` | Kurulun oyları ve kararları, güvenilirliğin kaynağı | Evet; ağırlıklar o zaman yeniden 1,0'dan başlar |
+| `docs/GREMIUM.md` | Okumak için rol kartları, `nexus_gremium.py` dosyasından üretilir | Evet |
 
 ### GitHub'dan gelen listeler
 
-Bot üç listeyi kendi klasöründen değil, gerektiğinde herkese açık `KhungFu/kisilerim` deposundan yükler: `mentor_name.txt` (işlem doktrini; ilk 3000 karakter yapay zekâ talimatına eklenir), `toplam_egitim.txt` ve `Abfrage_Quellen.txt` (haber toplama için haber siteleri ve X hesapları). Böylece her kurulum aynı listeleri kullanır. GitHub'a ulaşılamazsa bot onlarsız devam eder. Listeler `nexus` deposunda tutulur; `kisilerim` onları oradan saatte bir çeker.
+Bot üç listeyi kendi klasöründen değil, gerektiğinde herkese açık `KhungFu/kisilerim` deposundan yükler: `mentor_name.txt` (işlem doktrini; eski akışta 20000 karaktere kadar yapay zekâ talimatına eklenir, Kurul `nexus_gremium.py` içindeki rol kartlarını kullanır), `toplam_egitim.txt` ve `Abfrage_Quellen.txt` (haber toplama için haber siteleri ve X hesapları). Böylece her kurulum aynı listeleri kullanır. GitHub'a ulaşılamazsa bot onlarsız devam eder. Listeler `nexus` deposunda tutulur; `kisilerim` onları oradan saatte bir çeker.
 
 ## 13. Güncelleme ve geri alma
 
-Bir güncelleme `nexus_ceo.py`, `nexus_lang.py` ve `nexus_diagnose.py` dosyalarından oluşur. Üçü bir bütündür; aşağıdaki komutlar her dosya için geçerlidir.
+Bir güncelleme `nexus_ceo.py`, `nexus_lang.py`, `nexus_diagnose.py` ve v16.0'dan itibaren `nexus_gremium.py` dosyalarından oluşur. Dördü bir bütündür ve aynı klasörde durur; aşağıdaki komutlar her dosya için geçerlidir.
 
 ```bash
 cp nexus_ceo.py nexus_ceo.py.bak
 cp nexus_lang.py nexus_lang.py.bak
+cp nexus_gremium.py nexus_gremium.py.bak 2>/dev/null
 # yeni dosyaları klasöre kopyala, sonra:
-python3 -m py_compile nexus_ceo.py && python3 nexus_lang.py && sudo systemctl restart nexus_ceo.service
+python3 -m py_compile nexus_ceo.py nexus_gremium.py && python3 nexus_lang.py && sudo systemctl restart nexus_ceo.service
 ```
 
 Yeniden başlatma yalnızca iki dosya da hatasızsa çalışır. Başlangıç mesajında sürümü denetle.
@@ -453,6 +517,8 @@ cp nexus_lang.py.bak nexus_lang.py
 sudo systemctl restart nexus_ceo.service
 ```
 
+Yalnızca Kurulu kapatmak için, eski dosyalar olmadan: `.env` içine `GREMIUM_MODUS=regeln` yaz, sonra yeniden başlat.
+
 Durum dosyaları güncellemelerde korunur. HARD BLOCK'lar (işlem engelleri) her yeniden başlatmada kaybolur.
 
 ## 14. Sorun giderme
@@ -463,7 +529,7 @@ Durum dosyaları güncellemelerde korunur. HARD BLOCK'lar (işlem engelleri) her
 | Bot yalnızca bir Chat ID ile yanıt veriyor | `MY_CHAT_ID` boş | Sayıyı `.env` dosyasına yaz, yeniden başlat |
 | Bot hiç yanıt vermiyor | Servis durmuş, token yanlış ya da `MY_CHAT_ID` dışında bir sohbetten yazıyorsun | Durumu denetle; `TG_TOKEN` ve `MY_CHAT_ID` değerlerini denetle |
 | Mesajlar yanlış dilde veya karışık geliyor | `BOT_LANGUAGE` yanlış, `nexus_lang.py` eksik ya da bir metin için kural yok | `/dil` gönder; `nexus_lang_missing.log` dosyasına bak |
-| Bot hiçbir şey açmıyor | Bir kilit devrede ya da Gate-Keeper aday bulamıyor | “🔔 Yeni işlem olmadan tarama:” mesajını oku; `/pozisyon`, `/kayip`, `/bloklar`; hafta sonu yalnızca kripto |
+| Bot hiçbir şey açmıyor | Bir kilit devrede, Kurul çoğunluk bulamıyor, karar yeter sayısı yok ya da başkan durduruyor | “🔔 Yeni işlem olmadan tarama:” mesajını oku; `/pozisyon`, `/kayip`, `/bloklar`; hafta sonu yalnızca kripto |
 | “INFO … \| Gemini quota doldu → Groq ile devam ediliyor” her taramada geliyor | Anahtarlar reddedildi, günlük limite ulaşıldı ya da ücretsiz kota için çok fazla tarama var | `/update_models`; reddedilen anahtarları değiştir; tarama aralığını uzat |
 | Log'da her taramada `Groq key 1 hata: ...` (veya Qwen, Nvidia) yazıyor | Model sağlayıcıda kapatılmış, anahtar reddedilmiş ya da limite ulaşılmış | `/update_models` modeli, zinciri ve engelleri gösterir; `/teshis` her sağlayıcı için en sık hata mesajını verir |
 | Kademeler satılmıyor | Hesapta Hedging modu açık, `MIRROR_TP_ENABLED=false` ya da saatlik ATR alınamıyor | Hedging'i kapat; `.env` dosyasını denetle |
@@ -471,6 +537,8 @@ Durum dosyaları güncellemelerde korunur. HARD BLOCK'lar (işlem engelleri) her
 | Pozisyon raporu günlük gürültü konusunda uyarıyor | Stop asgari mesafeden yakın | `/sl_genislet`, ardından `/sl_genislet evet` |
 | Pozisyon mesajsız kayboldu | Kapanış mesajı ancak bir sonraki 5 dakikalık turla gelir | Bekle; gelmezse Capital uygulamasında geçmişe bak |
 | “⚠️ NEXUS NATURE v12.0: API bağlantı hatası! Yeniden deneniyor... (Döngü #…)” | Capital.com'a ulaşılamıyor veya giriş reddedildi | `.env` içindeki erişim bilgilerini denetle, yeniden başlat |
+| "👔 Başkan …: yanıt yok - işlem yok" | Claude Code kurulu değil, oturum açılmamış ya da servis onu bulamıyor | `/kurul test`; terminalde `claude auth status`; `CLAUDE_CLI` değerini tam yolla ayarla (bölüm 9) |
+| Sık sık "Karar yeter sayısı yok" | Üyelerin ücretsiz kotası bitti (dakika ya da gün sınırı) | `/teshis`; daha fazla anahtar, `GREMIUM_MAX_KANDIDATEN=1`, daha uzun `SCAN_INTERVAL_SEC` |
 | Sembol bilinmiyor | Sembol `capital_markets_config.py` içinde veya yerleşik listede yok | Sembolü epic ve asgari büyüklükle birlikte `capital_markets_config.py` içine yaz, yeniden başlat |
 
 Yararlı log sorguları:
@@ -485,6 +553,9 @@ grep -E "Gemini .*: (tot|tageslimit|key|keytot|modell|abbruch)|\[OK\]" nexus_ceo
 # Neler reddedildi?
 grep -E "MAX POSITIONEN|Wiedereinstieg|HARD BLOK|SPREAD BLOK|KAPALI|FALLBACK-BLOCK|unplausibel" nexus_ceo.log | tail -40
 
+# Kurul ne karar verdi, neden işlem yapılmadı?
+grep -E "GREMIUM|Claude-Vorsitz" nexus_ceo.log | tail -40
+
 # Hatalar
 grep -E "ERROR|Traceback" nexus_ceo.log | tail -20
 ```
@@ -496,9 +567,13 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 ### Koddaki hatalar ve tuhaflıklar
 
 - **Yarıya indirme yalnızca dört coin için.** BTC, ETH, SOL ve XRP'de yarıya indirilir. Diğer coin'ler tam büyüklükle çalışır.
-- **On iki coin kripto sayılmaz.** Bot kriptoyu sabit bir ad listesinden tanır. Birlikte gelen piyasa listesindeki AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX ve XTZ bu listede yok. Bunlara emtia kuralları uygulanır: 5 Kurul oyundan 4'ü ve hafta sonu işlem yok.
+- **On iki coin kripto sayılmaz.** Bot kriptoyu sabit bir ad listesinden tanır. Birlikte gelen piyasa listesindeki AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX ve XTZ bu listede yok. Bunlara emtia kuralları uygulanır: 11 üzerinden 6 çoğunluk ve hafta sonu işlem yok.
 - **Korelasyon yalnızca kabaca denetlenir.** Grup sınırı grup başına piyasaları sayar, yönü ya da büyüklüğü değil. Petrol ve bakır sık sık birlikte hareket etse de farklı gruplardadır.
-- **5 pozisyondan itibaren karşı sinyal işlemez.** 5 veya daha fazla açık pozisyonda bot her denetimden önce durur. O zaman karşı sinyal mevcut pozisyonu da kapatmaz.
+- **`MAX_POSITIONEN` dolunca yalnızca çıkış.** Hesap doluyken bot yeni bir şey açmaz ve ekleme yapmaz; ama karşı sinyal açık bir pozisyonu yine kapatır (v15.24'e kadar önceden duruyordu).
+- **Mentorlar birer taklittir.** Rol kartları kişilerin yayımlanmış ilkelerini özetler; yanıt verenler kişiler değil, yapay zekâ modelleridir. Ücretsiz modeller her zaman rollerine sadık kalmaz.
+- **Güvenilirlik zaman ister.** Ağırlıklar ancak birkaç haftalık değerlendirilmiş oydan sonra belirgin biçimde ayrışır. Ölçülen, bir işlemin sonucu değil, 24 saat sonraki fiyat hareketidir.
+- **Başkan yalnızca durdurabilir.** Bir yönü dayatamaz ya da Kurulun görüşmediği bir piyasayı öneremez.
+- **Kota.** Ücretsiz sağlayıcılarda üyeler sınırlara takılınca düşer; o zaman bot yarım bilgiyle işlem yapmak yerine hiç işlem yapmaz.
 - **Bot veritabanındaki istatistik ve günlük hedef eksiktir.** Veritabanı yalnızca botun kendisinin tetiklediği kapanışları bilir. Esas alınacak olan Capital uygulamasındaki dökümdür.
 - **Manuel işlem** ne gürültü korumasını ne de `MAX_POSITION_EUR` değerini kullanır.
 - **Metinle HARD BLOCK (işlem engeli) çalışmaz.** “gold” gibi sözcükleri bir sembole bağlayan tablo, kodun daha aşağısında aynı adı taşıyan ikinci bir tablo (`ASSET_KEYWORDS`, haberler için) tarafından ezilir. Bu yüzden bot hiçbir cümlede sembol tanımaz ve hiçbir zaman engel koymaz. Hata bilerek düzeltilmedi: düzeltilseydi, içinde “sell”, “close”, “verkaufen” veya “kapat” ile bir sembol adı geçen bir cümle bu sembolün pozisyonlarını hemen kapatırdı.
