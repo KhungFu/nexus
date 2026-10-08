@@ -1,4 +1,4 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.22)
+# NEXUS CEO – Kullanım Kılavuzu (v15.23)
 
 NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.22 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
@@ -69,6 +69,7 @@ Bot komutları, metni ve düğmeleri yalnızca `MY_CHAT_ID` sohbetinden kabul ed
 | `/volatilite` | – | Kara Kuğu denetimini şimdi çalıştır |
 | `/update_models` | – | Yapay zekâ modellerini kontrol et: Gemini zinciri ve reddedilen anahtarlar, ayrıca Groq, Qwen ve Nvidia için model, zincir ve engeller. `/update_models best`, kontrolü geçen en büyük modele geçer |
 | `/teshis` | 🔎 Teşhis | Son 7 günün teşhisi: özet mesaj olarak, tam rapor metin dosyası olarak. `/teshis 3` = yalnızca 3 gün. Yalnızca okur |
+| `/kilavuz` | – | Tam kılavuz, kendi dilinde dosya olarak; sonunda botun şu anda çalıştığı ayarlar. `/kilavuz tr` = Türkçe, `de` = Almanca, `en` = İngilizce. Dosya botun yanında yoksa GitHub'dan indirir |
 | `/dil` | – | Dil seç |
 | `/yardim` | 📋 Menü | Komut özeti |
 

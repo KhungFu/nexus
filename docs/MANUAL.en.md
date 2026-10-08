@@ -1,4 +1,4 @@
-# NEXUS CEO – Operating Manual (v15.22)
+# NEXUS CEO – Operating Manual (v15.23)
 
 NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.22 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
 
@@ -69,6 +69,7 @@ The bot accepts commands, text and buttons only from the chat `MY_CHAT_ID`. It i
 | `/volatility` | – | Run the Black Swan check now |
 | `/update_models` | – | Check the AI models: Gemini chain and rejected keys, plus model, chain and blocks for Groq, Qwen and Nvidia. `/update_models best` switches to the largest model that passes the check |
 | `/diagnosis` | 🔎 Diagnosis | Diagnosis of the last 7 days: summary as a message, full report as a text file. `/diagnosis 3` = 3 days only. Read-only |
+| `/handbook` | – | The complete manual as a file in your language, with the settings the bot is running with right now at the end. `/handbook de` = German, `en` = English, `tr` = Turkish. If the file is not next to the bot, it downloads it from GitHub |
 | `/language` | – | Choose the language |
 | `/help` | 📋 Menu | Command overview |
 

@@ -1,6 +1,8 @@
-# NEXUS CEO – Betriebsanleitung (v15.22)
+# NEXUS CEO – Betriebsanleitung (v15.23)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.22 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.23 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+
+Am Ende stehen drei Anhänge: Spread-Tabelle (A), Kurzreferenz für den Alltag (B) und Glossar (C). Wenn du das Handbuch mit `/handbuch` in Telegram abrufst, hängt der Bot außerdem Anhang L an: deine Einstellungen von jetzt.
 
 Andere Sprachen: [English](MANUAL.en.md) · [Türkçe](MANUAL.tr.md)
 
@@ -69,6 +71,7 @@ Der Bot nimmt Befehle, Text und Tasten nur aus dem Chat `MY_CHAT_ID` an. Nachric
 | `/volatilitaet` | – | Schwarzer-Schwan-Prüfung jetzt ausführen |
 | `/update_models` | – | KI-Modelle prüfen: Gemini-Kette und abgelehnte Keys, dazu Modell, Kette und Sperren von Groq, Qwen und Nvidia. `/update_models best` wechselt auf das größte Modell, das die Prüfung besteht |
 | `/diagnose` | 🔎 Diagnose | Diagnose der letzten 7 Tage: Kurzfassung als Nachricht, ganzer Bericht als Textdatei. `/diagnose 3` = nur 3 Tage. Nur lesend |
+| `/handbuch` | – | Das komplette Handbuch als Datei in deiner Sprache, am Ende mit den Einstellungen, mit denen der Bot jetzt läuft. `/handbuch en` = Englisch, `de` = Deutsch, `tr` = Türkisch. Fehlt die Datei neben dem Bot, lädt er sie von GitHub |
 | `/sprache` | – | Sprache wählen |
 | `/hilfe` | 📋 Menü | Befehlsübersicht |
 
@@ -515,3 +518,72 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 ### Was geprüft ist
 
 Die Funktionen sind gegen nachgebaute Capital.com-, Telegram-, Gemini-, Groq-, OpenRouter- und Nvidia-Antworten getestet, nicht gegen ein echtes Live-Konto. Der Modellwechsel der Ersatz-Anbieter ist mit den Fehlermeldungen aus einem echten Log geprüft, aber nicht gegen die echten Modelllisten der Anbieter. Lass den Bot mindestens eine Woche im Demo-Konto laufen, bevor du `CAPITAL_URL` auf die Live-Adresse stellst.
+
+---
+
+## Anhang A – Spread-Tabelle (Preisabstand Ask minus Bid)
+
+`MAX_SPREAD` vergleicht den Live-Spread mit dem eingestellten Wert. Ist er größer, meldet der Bot „⛔ SPREAD BLOK" und eröffnet nicht.
+
+| Markt | Spread | Bei `MAX_SPREAD=2` |
+| --- | --- | --- |
+| Zink | 18,7 | gesperrt |
+| Aluminium | 29,4 | gesperrt |
+| Nickel | 65 | gesperrt |
+| Rohöl | 0,04 | frei |
+| Heizöl, Benzin | 0,002 | frei |
+| Weizen | 0,8 | frei |
+| Platin, Palladium, BTC, ETH_EUR, Kakao | über 2 | gesperrt |
+| Sojabohnen, AAVE, ETH_USD, BCH | grenznah | je nach Tageswert |
+
+Werte stammen aus `capital_markets_config.py` bzw. der Diagnose und schwanken im Tagesverlauf.
+
+---
+
+## Anhang B – Kurzreferenz für den Alltag
+
+**Jeden Tag**
+- `/status` – Konto, Positionen, Bot-Zustand
+- `/position` – offene Positionen mit Stop, Stufen, Gewinn
+- `/diagnose 1` – Diagnose-Bericht (Fehler, Zähler, Einstellungen, ohne Schlüssel)
+
+**Wenn etwas hakt**
+1. `/diagnose 1` aufrufen und den Bericht ansehen.
+2. KI antwortet nicht: `/update_models` (prüft und ersetzt tote Modelle).
+3. Bot reagiert gar nicht: `sudo systemctl restart nexus_ceo`, dann `journalctl -u nexus_ceo -n 50`.
+4. Nach einem Update schiefgelaufen: Rollback laut Kapitel 13.
+
+**Einstellung ändern**
+1. `.env` öffnen, genau einen Eintrag ändern (jeder Name nur einmal).
+2. Speichern, Bot neu starten.
+3. Mit `/diagnose 1` prüfen, dass der Wert übernommen wurde.
+
+**Verlustbegrenzung, in dieser Reihenfolge**
+1. Positionsgröße senken (`POSITION_SIZE_PCT`, `MAX_POSITION_EUR`).
+2. Weniger Positionen (`MAX_POSITIONEN`).
+3. Enge Märkte erzwingen (`MAX_SPREAD`).
+4. Tageslimit (`MAX_VERLUSTE_PRO_TAG`) und Wiedereinstiegssperre (`WIEDEREINSTIEG_SPERRE_STD`).
+
+**Sicherheit**
+- `.env` niemals hochladen oder weitergeben; nach jedem Teilen alle Schlüssel erneuern.
+- Zuerst Demo-Konto; `CAPITAL_URL` erst nach mindestens einer Woche Demo auf Live stellen.
+
+---
+
+## Anhang C – Glossar
+
+- **ATR** – durchschnittliche Tagesspanne (Average True Range); Basis für Stop und Stufen.
+- **Breakeven** – Stop wird auf den Einstieg gezogen, sobald +1 % erreicht sind.
+- **CFD** – Differenzkontrakt; Hebelprodukt, Totalverlust des Einsatzes möglich.
+- **Gate-Keeper** – Vorprüfung (Spread, Sperren, Limits) vor dem Gremium.
+- **Gremium** – fünf KI-Mentoren; 4 von 5 JA nötig (Krypto 3 von 5).
+- **Kara Kuğu** – Schutzregel gegen plötzliche Extremereignisse („Schwarzer Schwan").
+- **Mirror-TP** – Teilverkauf in drei Stufen (je 25 %) bei 0,5 / 1,0 / 1,5 × Stunden-ATR.
+- **Schutz-Schleife** – prüft alle 5 Minuten die offenen Positionen.
+- **Spread** – Abstand zwischen Kauf- und Verkaufskurs; kostet beim Einstieg sofort Geld.
+- **Trailing** – nachgezogener Stop, 5 % ab +1,5 %.
+- **Wiedereinstiegssperre** – Stunden, in denen ein soeben geschlossener Markt nicht erneut eröffnet wird.
+
+
+Die Tabelle „Anhang L“ mit deinen aktuellen Einstellungen hängt der Bot nur an, wenn du das Handbuch mit `/handbuch` abrufst.
+
