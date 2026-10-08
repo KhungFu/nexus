@@ -1,6 +1,6 @@
-# NEXUS CEO – Betriebsanleitung (v15.23)
+# NEXUS CEO – Betriebsanleitung (v15.24)
 
-NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.23 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
+NEXUS CEO ist ein Telegram-Bot, der über die Capital.com-API selbstständig CFD-Positionen auf Rohstoffe und Krypto eröffnet, absichert und in Stufen wieder verkauft. Diese Anleitung beschreibt den Stand v15.24 so, wie er im Code steht. Sie beschreibt die Technik und ist keine Anlageempfehlung. CFD-Handel kann zum Verlust des eingesetzten Geldes führen; nutze zuerst ein Demo-Konto.
 
 Am Ende stehen drei Anhänge: Spread-Tabelle (A), Kurzreferenz für den Alltag (B) und Glossar (C). Wenn du das Handbuch mit `/handbuch` in Telegram abrufst, hängt der Bot außerdem Anhang L an: deine Einstellungen von jetzt.
 
@@ -137,7 +137,7 @@ Auf ein Gegensignal reagiert nur der Scan. Der Exit-Monitor schließt nach seine
 
 | Takt | Aufgabe |
 | --- | --- |
-| alle 5 Minuten | Schutz-Lauf: Schwarzer Schwan, Breakeven, Mirror-TP, Trailing-Stop, Meldung geschlossener Positionen |
+| alle 5 Minuten | Schutz-Lauf: Schwarzer Schwan, Breakeven, Mirror-TP, Stop-Leiter, Trailing-Stop, Meldung geschlossener Positionen |
 | alle 15 Minuten | Tagesziel-Wächter: fragt mit Ja/Nein-Tasten, ob eine Position am Tagesziel verkauft werden soll |
 | alle 30 Minuten | Exit-Monitor: schließt bei `AUTO_EXIT=true` eine Position, wenn 3 von 5 Exit-Regeln zustimmen |
 | alle 60 Minuten | Nachrichten sammeln (RSS, X) |
@@ -151,7 +151,7 @@ Bei automatischen Trades bestimmt allein die `.env` die Größe; die Zahl, die d
 
 1. Basis = Depot × `POSITION_SIZE_PCT`, mindestens `MIN_POSITION_EUR`.
 2. Obergrenze = der kleinste dieser drei Werte: `MAX_POSITION_EUR` (wenn gesetzt), die Risk-Parity-Grenze (zwei Drittel des Depots) und 50 % des Depots.
-3. Bei Epics mit BTC, ETH, SOL oder XRP im Namen wird der Betrag halbiert.
+3. Bei BTC, ETH, SOL und XRP wird der Betrag halbiert.
 4. Der Betrag wird mit dem Live-Kurs und dem EUR/USD-Kurs in Einheiten umgerechnet.
 5. Liegt das Ergebnis unter der Mindestgröße der Börse, nimmt der Bot die Mindestgröße. Kostet schon die Mindestgröße mehr als die Obergrenze, gibt es keinen Trade.
 
@@ -185,6 +185,7 @@ Der Take Profit kommt von der KI. Fehlt er oder liegt er näher als 0,3 % am Kur
 | Kurs erreicht Einstieg ± 0,5 × Stunden-ATR | Mirror-TP Stufe 1: verkauft 25 % der ursprünglichen Größe |
 | Kurs erreicht ± 1,0 × Stunden-ATR | Mirror-TP Stufe 2: weitere 25 % |
 | Kurs erreicht ± 1,5 × Stunden-ATR | Mirror-TP Stufe 3: weitere 25 % |
+| Eine Stufe ist verkauft | Stop-Leiter: Stop nach Stufe 1 auf den Einstieg (plus 0,03 %), nach Stufe 2 auf den Verkaufskurs von Stufe 1, nach Stufe 3 auf den von Stufe 2. Der Stop wird nur enger, nie weiter. Schalter `STOP_LEITER` |
 | Gewinn ab 1,0 % | Breakeven: Stop auf den Einstiegskurs (plus 0,03 %) |
 | Gewinn ab 1,5 % | Trailing-Stop: 5 % hinter dem besten Kurs, wird nur enger gezogen |
 | Gewinn ab 2 % bei mehreren Positionen im selben Symbol | Schließt die kleinste Position |
@@ -192,6 +193,8 @@ Der Take Profit kommt von der KI. Fehlt er oder liegt er näher als 0,3 % am Kur
 | Kurs erreicht den Take Profit | Capital.com schließt den Rest |
 
 Ein Stunden-ATR ist bei Rohstoffen etwa ein Fünftel der Tagesspanne. Die drei Stufen liegen damit bei etwa 0,1, 0,2 und 0,3 Tagesspannen, der Stop bei einer ganzen. Gewinne je Stufe sind deshalb deutlich kleiner als ein Verlust am Stop.
+
+Mit der Stop-Leiter kann eine Position, die Stufe 1 verkauft hat, nicht mehr mit dem vollen Stop schließen. Liegt der Kurs beim nächsten Lauf schon jenseits des neuen Stops (zum Beispiel weil Capital.com den Stop zu nah am Kurs abgelehnt hat), bleibt der alte Stop, bis der Kurs zurückkommt. Positionen, die eine Stufe noch vor v15.24 verkauft haben, bekommen den Stop auf den Einstieg.
 
 ### Regeln für den Teilverkauf
 
@@ -213,6 +216,7 @@ Diese Regeln prüft Python selbst; keine KI kann sie übergehen. „Fest im Code
 | Regel | Schwelle | Wirkung | Stellschraube |
 | --- | --- | --- | --- |
 | Maximale Positionen | 5 offene Positionen | Keine neue Position. Bei 5 oder mehr auch kein Aufstocken und kein Drehen | `MAX_POSITIONEN` |
+| Gruppen-Limit | 2 Märkte je Gruppe | Kein neuer Markt aus einer Gruppe, in der schon 2 Märkte offen sind. Gruppen: Energie (Crude, Brent, Erdgas, Heizöl, Benzin), Metalle (Gold, Silber, Platin, Palladium, Kupfer, Aluminium, Zink, Nickel), Agrar (Weizen, Mais, Soja, Kaffee, Zucker, Baumwolle, Kakao) und Krypto. Aufstocken eines offenen Markts zählt nicht | `MAX_JE_GRUPPE` |
 | Wiedereinstiegs-Sperre | 6 Stunden nach einer Schließung | Kein neuer Einstieg in dasselbe Symbol in derselben Richtung | `WIEDEREINSTIEG_SPERRE_STD` |
 | Verlust-Sperre | 3 Stop-Loss-Verluste je Symbol und Tag | Symbol für heute gesperrt; ab dem ersten Verlust eine Warnung. Ein Stop am Einstieg zählt nicht | `MAX_VERLUSTE_PRO_TAG` |
 | Tages-Verlust-Stopp | Depotwert 5 % oder 40 EUR unter dem Tageshoch | Heute keine neuen Trades | fest im Code |
@@ -354,6 +358,7 @@ Die Datei liegt neben `nexus_ceo.py`. Änderungen wirken nach einem Neustart. Ko
 | `MIN_POSITION_EUR` | 50.0 | Mindestbetrag je Position |
 | `MAX_POSITION_EUR` | leer | Feste Obergrenze je Position; leer = nur Risk-Parity-Grenze |
 | `MAX_POSITIONEN` | 5 | Höchstzahl offener Positionen |
+| `MAX_JE_GRUPPE` | 2 | Höchstens so viele Märkte je Gruppe gleichzeitig offen; 0 = aus |
 | `MAX_SPREAD` | 0.5 | Höchster Spread als Preisabstand (Ask minus Bid), kein Prozentwert; leer = kein Limit |
 | `GREMIUM_MIN_JA` | 4 | Nötige JA-Stimmen von 5 |
 | `GREMIUM_MIN_JA_KRYPTO` | 3 | Dasselbe für Krypto |
@@ -371,6 +376,7 @@ Die Datei liegt neben `nexus_ceo.py`. Änderungen wirken nach einem Neustart. Ko
 | `MIRROR_TP_ENABLED` | true | Stufenverkauf an oder aus |
 | `MIRROR_TP_LEVEL_1_MULT`, `_2_`, `_3_` | 0.5, 1.0, 1.5 | Abstand der drei Stufen in Stunden-ATR |
 | `MIRROR_TP_CLOSE_PCT` | 25.0 | Anteil der Position je Stufe |
+| `STOP_LEITER` | true | Stop nach jeder verkauften Stufe nachziehen; false = aus |
 | `MAX_VERLUSTE_PRO_TAG` | 3 | Stop-Loss-Verluste je Symbol und Tag bis zur Sperre; 0 = aus |
 | `WIEDEREINSTIEG_SPERRE_STD` | 6 | Stunden bis zum Wiedereinstieg nach einer Schließung; 0 = aus |
 
@@ -491,10 +497,9 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 
 ### Fehler und Eigenheiten im Code
 
-- **Gasoline zählt als Krypto.** Der Name GASOLINE enthält „SOL“. Der Bot halbiert deshalb die Positionsgröße, verlangt nur 3 von 5 Gremium-Stimmen und wendet die Krypto-Regeln an, auch am Wochenende.
 - **Halbierung nur für vier Coins.** Halbiert wird bei BTC, ETH, SOL und XRP. Andere Coins laufen mit voller Größe.
 - **Zwölf Coins gelten nicht als Krypto.** Der Bot erkennt Krypto an einer festen Namensliste. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX und XTZ aus der mitgelieferten Marktliste stehen nicht darauf. Für sie gelten die Regeln für Rohstoffe: 4 von 5 Gremium-Stimmen und kein Handel am Wochenende.
-- **Korrelation wird nicht geprüft.** Verwandte Märkte wie Crude, Heating Oil und Gasoline gelten als unabhängige Positionen.
+- **Korrelation wird nur grob geprüft.** Das Gruppen-Limit zählt Märkte je Gruppe, nicht Richtung oder Größe. Öl und Kupfer liegen in verschiedenen Gruppen, auch wenn sie oft gemeinsam laufen.
 - **Ab 5 Positionen wirkt kein Gegensignal.** Bei 5 oder mehr offenen Positionen bricht der Bot vor jeder Prüfung ab. Ein Gegensignal schließt dann auch keine bestehende Position.
 - **Statistik und Tagesziel aus der Bot-Datenbank sind unvollständig.** Die Datenbank kennt nur Schließungen, die der Bot selbst ausgelöst hat. Maßgeblich ist die Auswertung in der Capital-App.
 - **Der manuelle Trade** nutzt weder den Rausch-Schutz noch `MAX_POSITION_EUR`.
@@ -507,7 +512,7 @@ Das Log bleibt in der Originalsprache (Deutsch und Türkisch gemischt); überset
 - **Schließ-Meldung:** Eine Position, die innerhalb von 5 Minuten eröffnet und wieder geschlossen wird, sieht der Bot nicht.
 - **Handelssperren** liegen nur im Arbeitsspeicher und überleben keinen Neustart.
 - **Gestoppter Bot:** Kein Breakeven, kein Stufenverkauf, kein Trailing. Nur Stop und Ziel bei Capital.com wirken weiter.
-- **Gewinne und Verluste sind ungleich groß.** Die Stufen liegen bei etwa 0,1 bis 0,3 Tagesspannen, der Stop bei einer ganzen. Eine hohe Trefferquote allein reicht deshalb nicht für einen Gewinn.
+- **Gewinne und Verluste sind ungleich groß.** Mit den Standardstufen (0.5 / 1.0 / 1.5) liegen die Stufen bei etwa 0,1 bis 0,3 Tagesspannen, der Stop bei einer ganzen. Alle drei Teilverkäufe zusammen bringen dann weniger, als der Stop auf den Rest kostet. Größere Stufen (zum Beispiel 1.0 / 2.0 / 3.0) und die Stop-Leiter mildern das. Eine hohe Trefferquote allein reicht nicht für einen Gewinn.
 
 ### Grenzen der Übersetzung
 
@@ -580,6 +585,8 @@ Werte stammen aus `capital_markets_config.py` bzw. der Diagnose und schwanken im
 - **Kara Kuğu** – Schutzregel gegen plötzliche Extremereignisse („Schwarzer Schwan").
 - **Mirror-TP** – Teilverkauf in drei Stufen (je 25 %) bei 0,5 / 1,0 / 1,5 × Stunden-ATR.
 - **Schutz-Schleife** – prüft alle 5 Minuten die offenen Positionen.
+- **Stop-Leiter** – nach jeder verkauften Stufe rückt der Stop nach: auf den Einstieg, dann auf die vorige Stufe.
+- **Gruppen-Limit** – höchstens 2 Märkte je Gruppe (Energie, Metalle, Agrar, Krypto) gleichzeitig offen.
 - **Spread** – Abstand zwischen Kauf- und Verkaufskurs; kostet beim Einstieg sofort Geld.
 - **Trailing** – nachgezogener Stop, 5 % ab +1,5 %.
 - **Wiedereinstiegssperre** – Stunden, in denen ein soeben geschlossener Markt nicht erneut eröffnet wird.

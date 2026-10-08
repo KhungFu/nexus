@@ -1,6 +1,6 @@
-# NEXUS CEO – Kullanım Kılavuzu (v15.23)
+# NEXUS CEO – Kullanım Kılavuzu (v15.24)
 
-NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.22 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
+NEXUS CEO, Capital.com API'si üzerinden emtia ve kripto CFD pozisyonlarını kendi başına açan, koruyan ve kademeli olarak yeniden satan bir Telegram botudur. Bu kılavuz v15.24 sürümünü kodda olduğu hâliyle anlatır. Tekniği anlatır, yatırım tavsiyesi değildir. CFD işlemleri yatırdığın paranın kaybıyla sonuçlanabilir; önce bir demo hesap kullan.
 
 Diğer diller: [Deutsch](MANUAL.de.md) · [English](MANUAL.en.md)
 
@@ -135,7 +135,7 @@ Karşı sinyale yalnızca tarama tepki verir. Çıkış izleyicisi kendi kuralla
 
 | Sıklık | Görev |
 | --- | --- |
-| 5 dakikada bir | Koruma turu: Kara Kuğu, Breakeven, Mirror-TP, Trailing-Stop, kapanan pozisyonların bildirimi |
+| 5 dakikada bir | Koruma turu: Kara Kuğu, Breakeven, Mirror-TP, stop merdiveni, Trailing-Stop, kapanan pozisyonların bildirimi |
 | 15 dakikada bir | Günlük hedef bekçisi: Evet/Hayır düğmeleriyle, günlük hedefe ulaşan bir pozisyonun satılıp satılmayacağını sorar |
 | 30 dakikada bir | Çıkış izleyicisi: `AUTO_EXIT=true` ise 5 çıkış kuralından 3'ü onaylayınca pozisyonu kapatır |
 | 60 dakikada bir | Haber toplama (RSS, X) |
@@ -149,7 +149,7 @@ Otomatik işlemlerde büyüklüğü yalnızca `.env` belirler; yapay zekânın S
 
 1. Temel = hesap × `POSITION_SIZE_PCT`, en az `MIN_POSITION_EUR`.
 2. Üst sınır = şu üç değerin en küçüğü: `MAX_POSITION_EUR` (ayarlıysa), Risk-Parity sınırı (hesabın üçte ikisi) ve hesabın %50'si.
-3. Adında BTC, ETH, SOL veya XRP geçen epic'lerde tutar yarıya indirilir.
+3. BTC, ETH, SOL ve XRP'de tutar yarıya indirilir.
 4. Tutar, canlı fiyat ve EUR/USD fiyatıyla birime çevrilir.
 5. Sonuç borsanın asgari büyüklüğünün altındaysa bot asgari büyüklüğü alır. Asgari büyüklük bile üst sınırdan pahalıysa işlem yapılmaz.
 
@@ -183,6 +183,7 @@ Take Profit yapay zekâdan gelir. Yoksa ya da fiyata %0,3'ten yakınsa bot günl
 | Fiyat giriş ± 0,5 × saatlik ATR'ye ulaşır | Mirror-TP kademe 1: başlangıçtaki büyüklüğün %25'ini satar |
 | Fiyat ± 1,0 × saatlik ATR'ye ulaşır | Mirror-TP kademe 2: bir %25 daha |
 | Fiyat ± 1,5 × saatlik ATR'ye ulaşır | Mirror-TP kademe 3: bir %25 daha |
+| Bir kademe satıldı | Stop merdiveni: kademe 1'den sonra stop girişe (artı %0,03), kademe 2'den sonra kademe 1'in satış fiyatına, kademe 3'ten sonra kademe 2'ninkine çekilir. Stop yalnızca daraltılır, asla genişletilmez. Anahtar `STOP_LEITER` |
 | Kâr %1,0 ve üzeri | Breakeven: stop giriş fiyatına (artı %0,03) |
 | Kâr %1,5 ve üzeri | Trailing-Stop: en iyi fiyatın %5 gerisinde, yalnızca daraltılır |
 | Aynı sembolde birden çok pozisyon varken kâr %2 ve üzeri | En küçük pozisyonu kapatır |
@@ -190,6 +191,8 @@ Take Profit yapay zekâdan gelir. Yoksa ya da fiyata %0,3'ten yakınsa bot günl
 | Fiyat Take Profit'e ulaşır | Capital.com kalanı kapatır |
 
 Emtialarda bir saatlik ATR, günlük aralığın yaklaşık beşte biridir. Böylece üç kademe yaklaşık 0,1, 0,2 ve 0,3 günlük aralıkta, stop ise tam bir günlük aralıkta durur. Bu yüzden kademe başına kâr, stop'taki bir kayıptan belirgin biçimde küçüktür.
+
+Stop merdiveni sayesinde kademe 1'i satmış bir pozisyon artık tam stop ile kapanamaz. Bir sonraki turda fiyat yeni stop'un zaten ötesindeyse (örneğin Capital.com stop'u fiyata çok yakın diye reddettiyse), fiyat geri gelene kadar eski stop kalır. v15.24'ten önce bir kademe satmış pozisyonlar stop'u girişe alır.
 
 ### Kısmi satış kuralları
 
@@ -211,6 +214,7 @@ Bu kuralları Python kendisi denetler; hiçbir yapay zekâ onları aşamaz. “K
 | Kural | Eşik | Etki | Ayar |
 | --- | --- | --- | --- |
 | Azami pozisyon sayısı | 5 açık pozisyon | Yeni pozisyon yok. 5 veya daha fazlasında ekleme ve yön değiştirme de yok | `MAX_POSITIONEN` |
+| Grup sınırı | Grup başına 2 piyasa | İçinde zaten 2 piyasa açık olan bir gruptan yeni piyasa açılmaz. Gruplar: enerji (Crude, Brent, doğalgaz, ısınma yakıtı, benzin), metaller (altın, gümüş, platin, paladyum, bakır, alüminyum, çinko, nikel), tarım (buğday, mısır, soya, kahve, şeker, pamuk, kakao) ve kripto. Açık bir piyasaya ekleme sayılmaz | `MAX_JE_GRUPPE` |
 | Yeniden giriş kilidi | Kapanıştan sonra 6 saat | Aynı sembole aynı yönde yeni giriş yok | `WIEDEREINSTIEG_SPERRE_STD` |
 | Kayıp kilidi | Sembol ve gün başına 3 Stop Loss kaybı | Sembol bugün için kilitli; ilk kayıptan itibaren uyarı. Girişteki stop sayılmaz | `MAX_VERLUSTE_PRO_TAG` |
 | Günlük kayıp durdurması | Hesap değeri günün zirvesinin %5 veya 40 EUR altında | Bugün yeni işlem yok | kodda sabit |
@@ -352,6 +356,7 @@ Dosya `nexus_ceo.py` ile aynı klasördedir. Değişiklikler yeniden başlatmada
 | `MIN_POSITION_EUR` | 50.0 | Pozisyon başına asgari tutar |
 | `MAX_POSITION_EUR` | boş | Pozisyon başına sabit üst sınır; boş = yalnızca Risk-Parity sınırı |
 | `MAX_POSITIONEN` | 5 | Açık pozisyonların azami sayısı |
+| `MAX_JE_GRUPPE` | 2 | Grup başına aynı anda en fazla bu kadar açık piyasa; 0 = kapalı |
 | `MAX_SPREAD` | 0.5 | Fiyat farkı olarak en yüksek spread (Ask eksi Bid), yüzde değil; boş = limit yok |
 | `GREMIUM_MIN_JA` | 4 | 5 oydan gereken EVET oyu sayısı |
 | `GREMIUM_MIN_JA_KRYPTO` | 3 | Aynısı kripto için |
@@ -369,6 +374,7 @@ Dosya `nexus_ceo.py` ile aynı klasördedir. Değişiklikler yeniden başlatmada
 | `MIRROR_TP_ENABLED` | true | Kademeli satış açık veya kapalı |
 | `MIRROR_TP_LEVEL_1_MULT`, `_2_`, `_3_` | 0.5, 1.0, 1.5 | Üç kademenin saatlik ATR cinsinden mesafesi |
 | `MIRROR_TP_CLOSE_PCT` | 25.0 | Kademe başına pozisyon payı |
+| `STOP_LEITER` | true | Satılan her kademeden sonra stop'u çek; false = kapalı |
 | `MAX_VERLUSTE_PRO_TAG` | 3 | Kilide kadar sembol ve gün başına Stop Loss kaybı sayısı; 0 = kapalı |
 | `WIEDEREINSTIEG_SPERRE_STD` | 6 | Kapanıştan sonra yeniden girişe kadar geçen saat; 0 = kapalı |
 
@@ -489,10 +495,9 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 
 ### Koddaki hatalar ve tuhaflıklar
 
-- **Gasoline kripto sayılır.** GASOLINE adı “SOL” içerir. Bu yüzden bot pozisyon büyüklüğünü yarıya indirir, 5 Kurul oyundan yalnızca 3'ünü ister ve kripto kurallarını hafta sonu da dahil uygular.
 - **Yarıya indirme yalnızca dört coin için.** BTC, ETH, SOL ve XRP'de yarıya indirilir. Diğer coin'ler tam büyüklükle çalışır.
 - **On iki coin kripto sayılmaz.** Bot kriptoyu sabit bir ad listesinden tanır. Birlikte gelen piyasa listesindeki AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX ve XTZ bu listede yok. Bunlara emtia kuralları uygulanır: 5 Kurul oyundan 4'ü ve hafta sonu işlem yok.
-- **Korelasyon denetlenmez.** Crude, Heating Oil ve Gasoline gibi akraba piyasalar bağımsız pozisyon sayılır.
+- **Korelasyon yalnızca kabaca denetlenir.** Grup sınırı grup başına piyasaları sayar, yönü ya da büyüklüğü değil. Petrol ve bakır sık sık birlikte hareket etse de farklı gruplardadır.
 - **5 pozisyondan itibaren karşı sinyal işlemez.** 5 veya daha fazla açık pozisyonda bot her denetimden önce durur. O zaman karşı sinyal mevcut pozisyonu da kapatmaz.
 - **Bot veritabanındaki istatistik ve günlük hedef eksiktir.** Veritabanı yalnızca botun kendisinin tetiklediği kapanışları bilir. Esas alınacak olan Capital uygulamasındaki dökümdür.
 - **Manuel işlem** ne gürültü korumasını ne de `MAX_POSITION_EUR` değerini kullanır.
@@ -505,7 +510,7 @@ Log özgün dilde kalır (Almanca ve Türkçe karışık); yalnızca Telegram me
 - **Kapanış mesajı:** 5 dakika içinde açılıp yeniden kapanan bir pozisyonu bot görmez.
 - **HARD BLOCK'lar (işlem engelleri)** yalnızca bellekte durur ve yeniden başlatmadan sonra kalmaz.
 - **Durdurulmuş bot:** Breakeven yok, kademeli satış yok, Trailing yok. Yalnızca Capital.com'daki stop ve hedef etkili kalır.
-- **Kârlar ve kayıplar eşit büyüklükte değildir.** Kademeler yaklaşık 0,1 ile 0,3 günlük aralıkta, stop ise tam bir günlük aralıkta durur. Bu yüzden yüksek bir isabet oranı tek başına kâr için yetmez.
+- **Kârlar ve kayıplar eşit büyüklükte değildir.** Varsayılan kademelerle (0.5 / 1.0 / 1.5) kademeler yaklaşık 0,1 ile 0,3 günlük aralıkta, stop ise tam bir günlük aralıkta durur. Üç kısmi satış birlikte, kalanın stop'unun maliyetinden az getirir. Daha büyük kademeler (örneğin 1.0 / 2.0 / 3.0) ve stop merdiveni bunu hafifletir. Yüksek bir isabet oranı tek başına kâr için yetmez.
 
 ### Çevirinin sınırları
 
