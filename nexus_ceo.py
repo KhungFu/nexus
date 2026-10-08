@@ -836,7 +836,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.24"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v16.0"                                    # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -846,6 +846,26 @@ try:
     MAX_JE_GRUPPE    = int(float(os.getenv("MAX_JE_GRUPPE", "2") or 0))  # v15.24: max. offene Maerkte je Gruppe (0 = aus)
 except ValueError:
     MAX_JE_GRUPPE    = 2
+
+
+def _env_zahl(name, std, typ=float):
+    """Zahl aus der .env; leer, Kommentar oder Unsinn -> Standardwert."""
+    try:
+        return typ(float(os.getenv(name, str(std)).split("#")[0].strip() or std))
+    except ValueError:
+        return typ(std)
+
+
+# v16.0 GREMIUM: 11 Mentoren stimmen unabhaengig ab (nexus_gremium.py)
+GREMIUM_MODUS          = (os.getenv("GREMIUM_MODUS", "ki").split("#")[0].strip().lower() or "ki")  # ki = neues Gremium, regeln = alter Ablauf (v15)
+GREMIUM_MEHRHEIT       = _env_zahl("GREMIUM_MEHRHEIT", 6)          # gewichtete Stimmen von 11 fuer einen Beschluss
+GREMIUM_MEHRHEIT_KRYPTO = _env_zahl("GREMIUM_MEHRHEIT_KRYPTO", 5)  # Krypto am Wochenende
+GREMIUM_MIN_ANTWORTEN  = _env_zahl("GREMIUM_MIN_ANTWORTEN", 8, int)   # weniger gueltige Antworten = nicht beschlussfaehig
+GREMIUM_MAX_KANDIDATEN = _env_zahl("GREMIUM_MAX_KANDIDATEN", 2, int)  # so viele Maerkte beraet das Gremium je Scan hoechstens
+GREMIUM_GUELTIG_STD    = _env_zahl("GREMIUM_GUELTIG_STD", 4)       # ein Beschluss gilt so viele Stunden (kein neues Beraten desselben Markts)
+GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 2, int)     # gleichzeitige KI-Aufrufe
+GREMIUM_BEWERTUNG_STD  = _env_zahl("GREMIUM_BEWERTUNG_STD", 24)    # nach so vielen Stunden wird jede Stimme am Kurs gemessen
+GREMIUM_GEWICHTUNG     = os.getenv("GREMIUM_GEWICHTUNG", "true").split("#")[0].strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
 WIEDEREINSTIEG_SPERRE_STD = float(os.getenv("WIEDEREINSTIEG_SPERRE_STD", "6"))  # v15.18: so viele Stunden nach einer Schliessung kein neuer Einstieg in dasselbe Symbol/dieselbe Richtung (0 = aus)
 SCAN_MELDUNGEN       = os.getenv("SCAN_MELDUNGEN", "neu").strip().lower()  # v15.18: "neu" = Scan ohne Trade nur melden, wenn sich etwas aendert; "alle" = wie vorher
 
@@ -7868,7 +7888,7 @@ def news_collector_loop():
 def load_doctrine():
     try:
         r = requests.get("https://raw.githubusercontent.com/KhungFu/kisilerim/main/mentor_name.txt", timeout=10)
-        if r.status_code == 200: return r.text[:3000]
+        if r.status_code == 200: return r.text[:20000]  # v16.0: vorher [:3000] - drei Viertel der Doktrin (10 der 11 Mentoren) kamen nie an
     except: pass
     return "Özel doktrin yok. Standart kurallar uygulanır."
 
@@ -9582,6 +9602,421 @@ def handle_handbuch(message):
     lang = teile[1].lower() if len(teile) > 1 and teile[1].lower() in ("de", "en", "tr") else \
         (BOT_LANGUAGE if BOT_LANGUAGE in ("de", "en", "tr") else "de")
     threading.Thread(target=_handbuch_lauf, args=(lang,), daemon=True).start()
+
+
+# ============================================================
+# v16.0 GREMIUM - 11 Mentoren stimmen unabhaengig ab (nexus_gremium.py)
+# ------------------------------------------------------------
+# Vorher: fuenf feste Wenn-dann-Regeln mit Mentoren-Namen (gremium_oylama), die
+# alle JA sagten, sobald das Tages-MA-Signal Staerke 2 hatte. Die KI bekam die
+# Richtung vorgegeben und im Ersatzbetrieb fast keine Daten.
+# Jetzt: Python baut je Kandidat ein Dossier mit echten Daten, jedes Mitglied
+# stimmt in einem eigenen KI-Aufruf ab (BUY/SELL/BEKLE), Python zaehlt, der
+# Vorsitz prueft. Alle Python-Sperren in execute_nexus_trade gelten weiter.
+# .env GREMIUM_MODUS=regeln stellt den alten Ablauf wieder her.
+# ============================================================
+try:
+    import nexus_gremium as _NG
+except Exception as _ng_e:
+    _NG = None
+    logging.error(f"nexus_gremium.py fehlt oder fehlerhaft ({_ng_e}) - Gremium im alten Modus")
+
+_GD = None
+if _NG is not None:
+    try:
+        _GD = _NG.Gedaechtnis(os.path.join(BASE_DIR, "nexus_gremium.db"))
+    except Exception as _gd_e:
+        logging.error(f"Gremium-Gedaechtnis: {_gd_e}")
+
+_GREMIUM_LOCK = threading.Lock()
+
+
+def gremium_aktiv():
+    return GREMIUM_MODUS == "ki" and _NG is not None and _GD is not None
+
+
+def _gremium_lang():
+    return BOT_LANGUAGE if BOT_LANGUAGE in ("de", "en", "tr") else "tr"
+
+
+def _gremium_senden(text):
+    """Bericht in der Bot-Sprache senden (ohne Regel-Uebersetzung), in Stuecken <= 4000 Zeichen."""
+    rest = text or ""
+    while rest:
+        if len(rest) <= 4000:
+            stueck, rest = rest, ""
+        else:
+            cut = rest.rfind("\n", 0, 4000)
+            cut = cut if cut > 0 else 4000
+            stueck, rest = rest[:cut], rest[cut:].lstrip("\n")
+        try:
+            _bot_send_raw(MY_CHAT_ID, stueck)
+        except Exception as e:
+            logging.warning(f"Gremium-Bericht: {e}")
+            return
+
+
+def _g_ema(werte, n):
+    if len(werte) < n:
+        return None
+    k = 2.0 / (n + 1)
+    e = sum(werte[:n]) / n
+    for v in werte[n:]:
+        e = v * k + e * (1 - k)
+    return e
+
+
+def _g_rsi(werte, n=14):
+    if len(werte) <= n:
+        return None
+    gew, ver = 0.0, 0.0
+    for i in range(1, n + 1):
+        d = werte[i] - werte[i - 1]
+        gew += max(d, 0); ver += max(-d, 0)
+    gew /= n; ver /= n
+    for i in range(n + 1, len(werte)):
+        d = werte[i] - werte[i - 1]
+        gew = (gew * (n - 1) + max(d, 0)) / n
+        ver = (ver * (n - 1) + max(-d, 0)) / n
+    return 100.0 if ver == 0 else 100 - 100 / (1 + gew / ver)
+
+
+def _g_pct(a, b):
+    return (a - b) / b * 100 if b else 0.0
+
+
+_G_NEWS_TAG = {"OIL_CRUDE": "OIL_BRENT", "OIL_BRENT": "OIL_BRENT", "HEATING_OIL": "OIL_BRENT",
+               "GASOLINE": "OIL_BRENT", "NATURALGAS": "NATURAL_GAS", "NATURAL_GAS": "NATURAL_GAS"}
+
+
+def _gremium_makro():
+    """Daten, die fuer alle Kandidaten gleich sind - einmal je Scan. Jede Quelle einzeln
+    abgesichert: faellt eine aus, steht das im Dossier, statt dass alles scheitert."""
+    m = {}
+    def _q(key, fn):
+        try:
+            m[key] = fn()
+        except Exception as e:
+            m[key] = None
+            logging.debug(f"Gremium-Makro {key}: {e}")
+    _q("fg", get_fear_greed)
+    _q("dxy", get_dxy_live)
+    _q("fred", get_fred_macro_signal)
+    _q("cal", get_economic_calendar)
+    _q("eia", get_eia_petroleum)
+    _q("cot_gold", lambda: get_cot_positioning("GOLD"))
+    _q("cot_oil", lambda: get_cot_positioning("OIL"))
+    _q("cot_silver", lambda: get_cot_positioning("SILVER"))
+    _q("usda_wheat", lambda: get_usda_supply_demand("Wheat"))
+    _q("usda_coffee", lambda: get_usda_supply_demand("Coffee"))
+    _q("usda_cocoa", lambda: get_usda_supply_demand("Cocoa"))
+    _q("wx_agrar", lambda: get_weather_signal("AGRAR"))
+    _q("wx_energy", lambda: get_weather_signal("ENERGY"))
+    try:
+        fg_val = (m.get("fg") or {}).get("value", 50)
+        m["regime"] = get_macro_regime(fg_val, get_volatility_regime({}))
+    except Exception:
+        m["regime"] = "?"
+    return m
+
+
+def _g_sum(d, feld="summary"):
+    if isinstance(d, dict):
+        return str(d.get(feld) or d.get("notes") or d.get("signal") or "k. A.")[:300]
+    return "k. A."
+
+
+def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
+    """Dossier fuer einen Kandidaten. Rueckgabe (text, info) - info: kurs, bid, ask, spread, atr_pct, tech."""
+    epic = cfg["epic"]
+    info = {"kurs": 0.0, "bid": 0.0, "ask": 0.0, "spread": 0.0, "atr_pct": 0.0, "status": "?",
+            "tech": f"{tech.get('sinyal')} (Stärke {tech.get('guc')})"}
+    z = []
+    jetzt = datetime.now()
+    z.append(f"=== DOSSIER {sym} ({cfg.get('name', epic)}) | {jetzt.strftime('%a %d.%m.%Y %H:%M')} Ortszeit | "
+             f"Gruppe: {markt_gruppe(sym) or markt_gruppe(epic) or '-'} ===")
+
+    # Kurs
+    try:
+        r = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10)
+        snap = r.json().get("snapshot", {}) if r.status_code == 200 else {}
+        info["bid"] = float(snap.get("bid", 0) or 0)
+        info["ask"] = float(snap.get("offer", 0) or 0)
+        info["status"] = snap.get("marketStatus", "?")
+        info["kurs"] = (info["bid"] + info["ask"]) / 2 if info["bid"] and info["ask"] else info["bid"]
+        info["spread"] = round(abs(info["ask"] - info["bid"]), 6) if info["bid"] and info["ask"] else 0.0
+    except Exception as e:
+        logging.debug(f"Gremium-Kurs {sym}: {e}")
+    k = info["kurs"]
+    z.append(f"KURS: Bid {info['bid']} / Ask {info['ask']} | Spread {info['spread']}"
+             + (f" ({info['spread'] / k * 100:.3f} % vom Kurs)" if k else "") + f" | Markt: {info['status']}")
+
+    # Tagesspanne
+    try:
+        atr, atr_pct, _ = get_daily_atr(epic)
+        info["atr_pct"] = float(atr_pct or 0)
+        z.append(f"TAGESSPANNE (ATR 14 Tage): {atr} = {atr_pct} % vom Kurs")
+    except Exception:
+        z.append("TAGESSPANNE: k. A.")
+
+    # Technik Tag
+    try:
+        data, _err = get_candles(epic, "DAY", 210)
+        c = (data or {}).get("close", []) if data else []
+        c = [float(x) for x in c if x]
+        if len(c) >= 30:
+            last = c[-1]
+            e20, e50, e200 = _g_ema(c, 20), _g_ema(c, 50), _g_ema(c, 200)
+            def _abst(e):
+                return f"{e:.5g} ({_g_pct(last, e):+.1f} %)" if e else "k. A."
+            hi, lo = max(c), min(c)
+            z.append(f"TECHNIK TAG ({len(c)} Kerzen): Schluss {last:.6g} | EMA20 {_abst(e20)} | EMA50 {_abst(e50)} | EMA200 {_abst(e200)}")
+            z.append(f"  Veränderung: 5 Tage {_g_pct(last, c[-6]):+.1f} % | 20 Tage {_g_pct(last, c[-21]):+.1f} % | "
+                     + (f"60 Tage {_g_pct(last, c[-61]):+.1f} % | " if len(c) > 61 else "")
+                     + f"Spanne {len(c)} Tage: {lo:.6g} - {hi:.6g} (Kurs bei {(last - lo) / (hi - lo) * 100 if hi > lo else 50:.0f} %)"
+                     + (f" | RSI14 {_g_rsi(c):.0f}" if _g_rsi(c) is not None else ""))
+        else:
+            z.append(f"TECHNIK TAG: zu wenige Kerzen ({len(c)})")
+    except Exception as e:
+        z.append(f"TECHNIK TAG: k. A. ({str(e)[:60]})")
+    z.append(f"SIGNAL PYTHON (Tages-MA/ADX/RSI): {tech.get('sinyal')} Stärke {tech.get('guc')} | {str(tech.get('aciklama', ''))[:200]}")
+    if tech.get("skor"):
+        z.append(f"  Score {tech['skor'].get('score', '?')}/{tech['skor'].get('max_score', '?')}: {str(tech['skor'].get('details', ''))[:250]}")
+
+    # Technik 4h (kurzfristige Bestaetigung)
+    if not is_crypto(sym):
+        try:
+            s4, g4, d4 = _analyse_timeframe(epic, "HOUR_4", 30)
+            z.append(f"TECHNIK 4H: {s4} Stärke {g4} | {str(d4)[:160]}")
+        except Exception:
+            z.append("TECHNIK 4H: k. A.")
+
+    # Fundamentaldaten je Gruppe
+    grp = markt_gruppe(sym) or markt_gruppe(epic)
+    su = sym.upper()
+    fund = []
+    if grp == "ENERGIE":
+        fund.append("EIA Öl-Lager: " + _g_sum(makro.get("eia")))
+        fund.append("COT Öl: " + _g_sum(makro.get("cot_oil")))
+        fund.append("Wetter Energie: " + _g_sum(makro.get("wx_energy"), "notes"))
+    if "GOLD" in su:
+        fund.append("COT Gold: " + _g_sum(makro.get("cot_gold")))
+    if "SILVER" in su:
+        fund.append("COT Silber: " + _g_sum(makro.get("cot_silver")))
+    if grp == "AGRAR":
+        if "WHEAT" in su: fund.append("USDA Weizen: " + _g_sum(makro.get("usda_wheat")))
+        if "COFFEE" in su: fund.append("USDA Kaffee: " + _g_sum(makro.get("usda_coffee")))
+        if "COCOA" in su: fund.append("USDA Kakao: " + _g_sum(makro.get("usda_cocoa")))
+        fund.append("Wetter Agrar: " + _g_sum(makro.get("wx_agrar"), "notes"))
+    if fund:
+        z.append("FUNDAMENTAL: " + " | ".join(fund))
+
+    # Makro
+    fg = makro.get("fg") or {}
+    fred = makro.get("fred") or {}
+    cal = makro.get("cal") or {}
+    fred_txt = " | ".join((fred.get("key_data") or [])[:4]) if isinstance(fred, dict) and fred.get("status") == "OK" else "k. A."
+    z.append(f"MAKRO: Regime {makro.get('regime', '?')} | Fear&Greed {fg.get('value', '?')} ({fg.get('label', '?')}) | "
+             f"DXY {makro.get('dxy') if makro.get('dxy') is not None else 'k. A.'} | FRED: {fred_txt}"
+             + (f" | FRED-Signal {fred.get('signal')}" if isinstance(fred, dict) and fred.get("signal") else ""))
+    z.append(f"TERMINE: nächster großer Termin {cal.get('next_event', '?')} in {cal.get('days_until', '?')} Tagen "
+             "(Schätzung aus dem Kalender: NFP erster Freitag, CPI Mitte Monat)")
+
+    # Nachrichten zum Asset
+    try:
+        news = get_news_summary_for_asset(_G_NEWS_TAG.get(sym, sym if sym in ASSET_KEYWORDS else "GENEL"), days=7)
+        z.append("NACHRICHTEN (Datenbank, 7 Tage):\n" + str(news)[:1400])
+    except Exception:
+        z.append("NACHRICHTEN: k. A.")
+
+    # Depot
+    pos_z = []
+    for p in positionen or []:
+        try:
+            pe = p["market"]["epic"]
+            pos_z.append(f"{pe} {p['position']['direction']} Größe {p['position'].get('size')} "
+                         f"Einstieg {p['position'].get('level')} UPL {p['position'].get('upl')} "
+                         f"[{markt_gruppe(pe) or '-'}]")
+        except Exception:
+            continue
+    z.append(f"DEPOT: Gesamt {acc.get('toplam', '?')} EUR | verfügbar {acc.get('musait', '?')} EUR | "
+             f"offener Gewinn/Verlust {acc.get('upl', '?')} EUR | Positionen {len(positionen or [])}/{MAX_POSITIONEN}")
+    z.append("OFFENE POSITIONEN: " + ("; ".join(pos_z) if pos_z else "keine"))
+    try:
+        z.append(f"HEUTE: {gunluk_kayip_sayisi(sym)} Stop-Loss-Verluste in {sym}")
+    except Exception:
+        pass
+    try:
+        for d in ("BUY", "SELL"):
+            ts = letzte_schliessung(epic, d)
+            if ts > 0 and time.time() - ts < 48 * 3600:
+                z.append(f"LETZTE SCHLIESSUNG {sym} {d}: vor {(time.time() - ts) / 3600:.1f} h")
+    except Exception:
+        pass
+    z.append(f"REGELN PYTHON: Stop mind. {SL_ATR_MULT:g} × Tagesspanne (max. {SL_MAX_PCT:g} %), Teilverkäufe in 3 Stufen, "
+             f"Stop-Leiter {'an' if STOP_LEITER else 'aus'}, max. {MAX_JE_GRUPPE or 'beliebig'} Märkte je Gruppe, "
+             f"Positionsgröße aus der .env.")
+    return "\n".join(z), info
+
+
+def gremium_kandidaten(h, positionen):
+    """Maerkte, ueber die das Gremium in diesem Scan beraet. Alle Maerkte werden angeschaut
+    (vorher brach der Scan nach 15 ab). Python-Signal ist nur ein Aufmerksamkeitsfilter:
+    die Mitglieder duerfen auch die Gegenrichtung oder BEKLE waehlen.
+    Was ohnehin gesperrt waere, wird gar nicht erst beraten (spart KI-Aufrufe)."""
+    offen = {}
+    for p in positionen or []:
+        try:
+            offen[p["market"]["epic"]] = p["position"]["direction"]
+        except Exception:
+            continue
+    voll = len(positionen or []) >= MAX_POSITIONEN
+    liste = []
+    for k, v in MARKET_CONFIG.items():
+        if k in TABU_ASSETS:
+            continue
+        if is_weekend() and not is_crypto(k):
+            continue
+        epic = v["epic"]
+        pos_dir = offen.get(epic)
+        if not pos_dir:
+            if voll:
+                continue
+            if MAX_JE_GRUPPE > 0:
+                _g, _go = gruppen_belegt(k, epic, positionen)
+                if _g and len(_go) >= MAX_JE_GRUPPE:
+                    continue
+        try:
+            if _GD.letzter_beschluss(k, GREMIUM_GUELTIG_STD):
+                continue
+        except Exception:
+            pass
+        try:
+            sinyal, guc, aciklama = technical_confluence(epic)
+        except Exception as e:
+            logging.debug(f"Gremium-Kandidat {k}: {e}")
+            continue
+        if sinyal not in ("BUY", "SELL") or guc < 2:
+            continue
+        if pos_dir == sinyal:
+            try:
+                ok, _neden = pyramiding_kontrol(h, epic, k)
+            except Exception:
+                ok = False
+            if not ok:
+                continue
+        if not pos_dir and WIEDEREINSTIEG_SPERRE_STD > 0:
+            _zu = letzte_schliessung(epic, sinyal)
+            if _zu > 0 and time.time() - _zu < WIEDEREINSTIEG_SPERRE_STD * 3600:
+                continue
+        try:
+            skor = berechne_signal_score(k, epic)
+        except Exception:
+            skor = {"score": 0, "max_score": 5, "details": ""}
+        liste.append({"sym": k, "cfg": v, "sinyal": sinyal, "guc": guc, "aciklama": aciklama, "skor": skor,
+                      "pos_dir": pos_dir})
+    liste.sort(key=lambda x: (x["skor"].get("score", 0), x["guc"]), reverse=True)
+    return liste[:max(0, GREMIUM_MAX_KANDIDATEN)]
+
+
+def _gremium_ask(prompt, system):
+    return call_ai(prompt, system=system, use_grounding=False)
+
+
+def gremium_zyklus():
+    """Ein Scan im Gremium-Modus. Rueckgabe (analysis, erlaubte_signale) fuer execute_nexus_trade."""
+    if not _GREMIUM_LOCK.acquire(blocking=False):
+        return "GREMIUM: läuft schon", {}
+    try:
+        h = capital_session.get_headers()
+        if not h:
+            return "API Baglanti Hatasi", {}
+        # alte Stimmen am Kurs messen (Glaubwuerdigkeit)
+        try:
+            def _preis(epic):
+                r = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10)
+                s = r.json().get("snapshot", {}) if r.status_code == 200 else {}
+                b, o = float(s.get("bid", 0) or 0), float(s.get("offer", 0) or 0)
+                return (b + o) / 2 if b and o else b
+            n_bew = _GD.bewerten(_preis, std=GREMIUM_BEWERTUNG_STD)
+            if n_bew:
+                logging.info(f"GREMIUM: {n_bew} Stimmen bewertet")
+        except Exception as e:
+            logging.warning(f"GREMIUM Bewertung: {e}")
+
+        positionen = get_positions(h) or []
+        acc = get_account_info(h) or {}
+        kandidaten = gremium_kandidaten(h, positionen)
+        global gemini_kandidaten
+        gemini_kandidaten = {}
+        if not kandidaten:
+            logging.info("GREMIUM: kein Kandidat in diesem Scan")
+            return "GREMIUM: kein Kandidat", {}
+
+        makro = _gremium_makro()
+        gewichte = _GD.gewichte() if GREMIUM_GEWICHTUNG else None
+        lang = _gremium_lang()
+        zeilen, erlaubt, kurz = [], {}, []
+        for kd in kandidaten:
+            sym, cfg = kd["sym"], kd["cfg"]
+            tech = {"sinyal": kd["sinyal"], "guc": kd["guc"], "aciklama": kd["aciklama"], "skor": kd["skor"]}
+            dossier, info = _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech)
+            if MAX_SPREAD is not None and info["spread"] > MAX_SPREAD:
+                logging.info(f"GREMIUM {sym}: Spread {info['spread']} > MAX_SPREAD {MAX_SPREAD} - nicht beraten")
+                continue
+            t0 = time.time()
+            stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL)
+            mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
+            erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN)
+            vs = None
+            karar, grund = "BEKLE", erg.get("grund", "")
+            if erg["richtung"]:
+                vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_ask, kurs=info["kurs"])
+                if vs.get("ok") and vs["karar"] == "UYGULA":
+                    karar, grund = "UYGULA", ""
+                    sl, tp = vs["sl"], vs["tp"]
+                    if (not sl or not tp) and info["kurs"] > 0:
+                        try:
+                            _tp2, _sl2, _ = get_atr_tp_sl(cfg["epic"], info["kurs"], erg["richtung"])
+                            sl, tp = sl or _sl2, tp or _tp2
+                        except Exception:
+                            pass
+                    zeilen.append(_NG.trade_zeile(sym, erg["richtung"], sl, tp))
+                    erlaubt[sym] = erg["richtung"]
+                    skor = dict(kd["skor"])
+                    skor.update({"signal": erg["richtung"], "gremium_ja": round(erg["gewicht"][erg["richtung"]]),
+                                 "gremium_oylar": {s["name"]: s["oy"] for s in stimmen}})
+                    gemini_kandidaten[sym] = skor
+                else:
+                    grund = "vorsitz_stop" if vs.get("ok") else "vorsitz_fehlt"
+            try:
+                _GD.speichern(sym, cfg["epic"], stimmen, info["kurs"], info["atr_pct"], erg, karar, grund)
+            except Exception as e:
+                logging.warning(f"GREMIUM speichern: {e}")
+            logging.info(
+                f"GREMIUM {sym}: {erg['richtung'] or '-'} | {karar} {grund} | BUY {erg['gewicht']['BUY']:.1f} "
+                f"SELL {erg['gewicht']['SELL']:.1f} BEKLE {erg['gewicht']['BEKLE']:.1f} | Antworten "
+                f"{erg['antworten']}/{erg['mitglieder']} | {time.time() - t0:.0f}s | "
+                + " ".join(f"{s['id']}:{s['oy'] if s['ok'] else '-'}" for s in stimmen))
+            _gremium_senden(_NG.bericht(sym, stimmen, erg, vs, lang=lang, kurs=info["kurs"], tech=info["tech"],
+                                        min_antworten=GREMIUM_MIN_ANTWORTEN))
+            kurz.append(f"{sym}: {erg['richtung'] or '-'} {karar}")
+        analysis = "GREMIUM v16: " + " | ".join(kurz) + ("\n" + "\n".join(zeilen) if zeilen else "")
+        return analysis, erlaubt
+    finally:
+        _GREMIUM_LOCK.release()
+
+
+@bot.message_handler(commands=CMD('gremium'))
+def handle_gremium(message):
+    """v16.0: /gremium - Glaubwuerdigkeit der Mitglieder und die letzten Beschluesse."""
+    if not gremium_aktiv():
+        _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {'alter Modus (GREMIUM_MODUS=regeln)' if _NG else 'nexus_gremium.py fehlt'}")
+        return
+    try:
+        _gremium_senden(_NG.gewichte_bericht(_GD, lang=_gremium_lang(), std=GREMIUM_BEWERTUNG_STD))
+    except Exception as e:
+        _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {str(e)[:200]}")
 
 
 @bot.message_handler(commands=CMD('sprache') + ['start'])
@@ -11361,7 +11796,15 @@ def main_loop():
 
             # ── Strategische Analyse ──────────────────────────────────
             _fallback_signale = None  # v15.10: nur im KI-Fallback gesetzt
-            analysis = fetch_strategic_response("AUTONOMOUS")
+            if gremium_aktiv():
+                # v16.0: 11 Mentoren stimmen ab; nur ihre Beschluesse (Symbol + Richtung) duerfen ausgefuehrt werden
+                try:
+                    analysis, _fallback_signale = gremium_zyklus()
+                except Exception as _gz_e:
+                    logging.error(f"GREMIUM Zyklus: {_gz_e}", exc_info=True)
+                    analysis, _fallback_signale = "GREMIUM: Fehler", {}
+            else:
+                analysis = fetch_strategic_response("AUTONOMOUS")
 
             if "QUOTA_FULL_ALL" in analysis:
                 # Gemini Quota leer → Groq direkt nutzen
@@ -11564,6 +12007,13 @@ Komutlar: /help
         konfig_uyarilar.append(f"✅ Gemini keys: {len(valid_gem)} adet")
     if not GROQ_KEYS:
         konfig_uyarilar.append("⚠️ GROQ_KEYS yok (opsiyonel fallback)")
+    if gremium_aktiv():  # v16.0
+        konfig_uyarilar.append(f"🏛️ Gremium: 11 Mentoren, Mehrheit {GREMIUM_MEHRHEIT:g}/11 (Krypto am Wochenende {GREMIUM_MEHRHEIT_KRYPTO:g}/11), "
+                               f"höchstens {GREMIUM_MAX_KANDIDATEN} Märkte je Scan - /gremium")
+    elif GREMIUM_MODUS == "ki":
+        konfig_uyarilar.append("⚠️ Gremium: nexus_gremium.py fehlt - alter Ablauf aktiv")
+    else:
+        konfig_uyarilar.append("🏛️ Gremium: alter Ablauf (GREMIUM_MODUS=regeln)")
     # Provider-Anzeige mit Key-Anzahl (Merge aus Qwen-Session)
     _prov_display = []
     for _prov in PROVIDER_ORDER:
