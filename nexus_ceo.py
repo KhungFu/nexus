@@ -3,6 +3,10 @@
 # |  NEXUS NATURE v15.8 - BRIDGEWATER EDITION                          |
 # |  Datei: nexus_ceo.py                                                |
 # |  Erstellt: 2026-07-14  |  Zuletzt geaendert: 2026-09-21            |
+# |  Aenderungen v15.23 (2026-10-08):                                   |
+# |    - /handbuch (/handbook, /kilavuz): schickt das komplette Handbuch |
+# |      als Datei in der eigenen Sprache (/handbuch en = Englisch),   |
+# |      mit einer Tabelle der Einstellungen, die der Bot jetzt nutzt  |
 # |  Aenderungen v15.22 (2026-10-06):                                   |
 # |    - Groq / Qwen (OpenRouter) / Nvidia: Modell-Schleife wie in     |
 # |      swarm.py - Modellliste, Kette aus Haupt- und Ersatzmodellen,  |
@@ -824,7 +828,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.22"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v15.23"                                       # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -9300,6 +9304,143 @@ def handle_diagnose(message):
     threading.Thread(target=_diagnose_lauf, args=(tage,), daemon=True).start()
 
 
+# ============================================================
+# v15.23: /handbuch - das komplette Handbuch als Datei per Telegram
+# ------------------------------------------------------------
+# Quelle: MANUAL.<sprache>.md neben dem Bot oder im Unterordner docs/. Fehlt die Datei oder
+# gehoert sie zu einer anderen Version, laedt der Bot sie von GitHub (HANDBUCH_URL in der
+# .env aenderbar). Am Ende haengt der Bot eine Tabelle mit den Werten an, die er JETZT benutzt
+# (aus den Handbuch-Tabellen Handel / Stop Loss / KI; Zugangsdaten stehen dort nicht und
+# werden ausserdem namentlich ausgefiltert). Aufruf: /handbuch  oder  /handbuch en  (de, en, tr).
+# ============================================================
+_HB_LOCK = threading.Lock()
+HANDBUCH_URL = os.getenv("HANDBUCH_URL") or "https://raw.githubusercontent.com/KhungFu/nexus/main/docs/MANUAL.{lang}.md"
+_HB_GEHEIM = re.compile(r"KEY|TOKEN|PASS|SECRET|CHAT_ID|LOGIN|MAIL|IDENTIFIER|COOKIE|URL", re.I)
+_HB_TXT = {
+    "de": {"titel": "Anhang L – Deine Einstellungen jetzt (live aus der .env, Stand {0}, Bot {1})",
+           "kopf": ("Eintrag", "Dein Wert", "Standard"), "leer": "nicht gesetzt",
+           "info": "Diese Tabelle zeigt die Werte, mit denen der Bot gerade läuft. Änderungen in der .env wirken erst nach einem Neustart.",
+           "start": "📘 Handbuch wird erstellt ...",
+           "cap": "📘 NEXUS-Handbuch (Deutsch), Stand {0}, Bot {1}. Am Ende: deine Einstellungen von jetzt.",
+           "fehlt": "⚠️ Handbuch nicht gefunden: weder im Bot-Ordner (MANUAL.{0}.md oder docs/) noch von GitHub ladbar ({1}).",
+           "fehler": "⚠️ Handbuch fehlgeschlagen: {0}"},
+    "en": {"titel": "Appendix L – Your settings right now (live from the .env, as of {0}, bot {1})",
+           "kopf": ("Entry", "Your value", "Default"), "leer": "not set",
+           "info": "This table shows the values the bot is running with right now. Changes in the .env only take effect after a restart.",
+           "start": "📘 Creating the manual ...",
+           "cap": "📘 NEXUS manual (English), as of {0}, bot {1}. At the end: your settings right now.",
+           "fehlt": "⚠️ Manual not found: neither in the bot folder (MANUAL.{0}.md or docs/) nor downloadable from GitHub ({1}).",
+           "fehler": "⚠️ Manual failed: {0}"},
+    "tr": {"titel": "Ek L – Şu anki ayarların (canlı olarak .env'den, {0}, bot {1})",
+           "kopf": ("Ayar", "Senin değerin", "Varsayılan"), "leer": "ayarlı değil",
+           "info": "Bu tablo botun şu anda çalıştığı değerleri gösterir. .env'deki değişiklikler yalnızca yeniden başlatmadan sonra geçerli olur.",
+           "start": "📘 Kılavuz hazırlanıyor ...",
+           "cap": "📘 NEXUS kılavuzu (Türkçe), {0}, bot {1}. Sonunda: şu anki ayarların.",
+           "fehlt": "⚠️ Kılavuz bulunamadı: ne bot klasöründe (MANUAL.{0}.md veya docs/) ne de GitHub'dan indirilebildi ({1}).",
+           "fehler": "⚠️ Kılavuz başarısız: {0}"},
+}
+_HB_NAME = {"de": "Handbuch", "en": "Manual", "tr": "Kilavuz"}
+
+
+def _hb_version(text):
+    m = re.search(r"\(v(\d+\.\d+)\)", (text or "")[:300])
+    return "v" + m.group(1) if m else None
+
+
+def _hb_lade(lang):
+    """(Text, Quelle). Reihenfolge: passende Datei neben dem Bot, sonst GitHub, sonst irgendeine Datei."""
+    name = "MANUAL.%s.md" % lang
+    lokal = None
+    for p in (os.path.join(BASE_DIR, name), os.path.join(BASE_DIR, "docs", name)):
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8") as f:
+                lokal = (f.read(), p)
+            break
+    if lokal and _hb_version(lokal[0]) == NEXUS_VERSION:
+        return lokal
+    url = HANDBUCH_URL.format(lang=lang)
+    fehler = ""
+    try:
+        r = requests.get(url, timeout=20)
+        if r.status_code == 200 and r.text.strip():
+            return r.text, url
+        fehler = "HTTP %s" % r.status_code
+    except Exception as e:
+        fehler = str(e)[:100]
+    if lokal:
+        return lokal
+    raise FileNotFoundError(fehler or "leer")
+
+
+def _hb_live(text, lang):
+    """Tabelle der aktuellen Werte aus den .env-Tabellen des Handbuchs (Kapitel 11)."""
+    t = _HB_TXT[lang]
+    a = text.find("\n## 11.")
+    if a < 0:
+        return ""
+    b = text.find("\n## 12.", a + 1)
+    teile = re.split(r"\n### ", text[a:b if b > 0 else len(text)])
+    zeilen, gesehen = [], set()
+    for tl in teile[1:-1]:            # letzte Unterrubrik (Zugang und Datenquellen) bleibt aussen vor
+        for z in tl.splitlines():
+            if not z.startswith("|"):
+                continue
+            zellen = [c.strip() for c in z.strip().strip("|").split("|")]
+            if len(zellen) < 2:
+                continue
+            for n in re.findall(r"`([A-Z][A-Z0-9_]+)`", zellen[0]):
+                if n in gesehen or _HB_GEHEIM.search(n):
+                    continue
+                gesehen.add(n)
+                wert = BOT_LANGUAGE if n == "BOT_LANGUAGE" else os.getenv(n)
+                wert = (wert or "").strip()
+                wert = (wert[:57] + "...") if len(wert) > 60 else wert
+                zeilen.append("| `%s` | %s | %s |" % (n, ("`%s`" % wert) if wert else "_%s_" % t["leer"],
+                                                      zellen[1].replace("\n", " ")))
+    if not zeilen:
+        return ""
+    k = t["kopf"]
+    return ("\n\n---\n\n## %s\n\n%s\n\n| %s | %s | %s |\n| --- | --- | --- |\n%s\n"
+            % (t["titel"].format(datetime.now().strftime("%d.%m.%Y %H:%M"), NEXUS_VERSION), t["info"],
+               k[0], k[1], k[2], "\n".join(zeilen)))
+
+
+def _handbuch_lauf(lang):
+    t = _HB_TXT[lang]
+    if not _HB_LOCK.acquire(blocking=False):
+        return
+    try:
+        import io as _io
+        _bot_send_raw(MY_CHAT_ID, t["start"])
+        try:
+            text, quelle = _hb_lade(lang)
+        except Exception as e:
+            _bot_send_raw(MY_CHAT_ID, t["fehlt"].format(lang, str(e)[:100]))
+            return
+        text = text.rstrip("\n") + _hb_live(text, lang)
+        datei = _io.BytesIO(text.encode("utf-8"))
+        datei.name = "NEXUS_%s_%s_%s.md" % (_HB_NAME[lang], lang, datetime.now().strftime("%Y%m%d"))
+        bot.send_document(MY_CHAT_ID, datei, caption=t["cap"].format(_hb_version(text) or "?", NEXUS_VERSION))
+        logging.info("Handbuch gesendet: %s, %d Zeichen, Quelle %s" % (lang, len(text), quelle))
+    except Exception as e:
+        logging.error("Handbuch: %s" % e)
+        try:
+            _bot_send_raw(MY_CHAT_ID, t["fehler"].format(str(e)[:200]))
+        except Exception:
+            pass
+    finally:
+        _HB_LOCK.release()
+
+
+@bot.message_handler(commands=CMD('handbuch'))
+def handle_handbuch(message):
+    """v15.23: /handbuch [de|en|tr] - komplettes Handbuch als Datei, mit den Einstellungen von jetzt."""
+    teile = (message.text or "").split()
+    lang = teile[1].lower() if len(teile) > 1 and teile[1].lower() in ("de", "en", "tr") else \
+        (BOT_LANGUAGE if BOT_LANGUAGE in ("de", "en", "tr") else "de")
+    threading.Thread(target=_handbuch_lauf, args=(lang,), daemon=True).start()
+
+
 @bot.message_handler(commands=CMD('sprache') + ['start'])
 def handle_sprache(message):
     """v15.19: /sprache, /language, /dil -> Sprache waehlen.
@@ -9951,6 +10092,7 @@ def handle_help(message):
         "  'Silver alma'           → SILVER BUY blok\n"
         "  'Gold nicht handeln'    → GOLD tam blok\n"
         "  'Silver serbest'        → SILVER blok kaldirilir\n\n"
+        "/handbuch    | handbuch    — Komplettes Handbuch als Datei (mit aktuellen Einstellungen)\n"
         "/help        | help        — Bu menü"
     )
     bot.send_message(MY_CHAT_ID, mesaj)
