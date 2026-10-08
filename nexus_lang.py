@@ -1868,6 +1868,27 @@ RULES = [
      ' - Prüfung ohne Ergebnis (Limit oder Netz): bleibt vorerst',
      ' - check without result (limit or network): kept for now',
      ' - kontrol sonuçsuz (limit veya ağ): şimdilik kalıyor'),
+    # v15.24: Stop-Leiter und Gruppen-Limit
+    ('⛔ {0}: Gruppen-Limit {1}/{2} - aus derselben Gruppe schon offen: {3} - nicht eröffnet',
+     '⛔ {0}: Gruppen-Limit {1}/{2} - aus derselben Gruppe schon offen: {3} - nicht eröffnet',
+     '⛔ {0}: group limit {1}/{2} - already open from the same group: {3} - not opened',
+     '⛔ {0}: grup sınırı {1}/{2} - aynı gruptan zaten açık: {3} - açılmadı'),
+    ('🪜 Stop-Leiter: {0} {1} - Stufe {2} verkauft, Stop auf Einstieg: {3} -> {4}',
+     '🪜 Stop-Leiter: {0} {1} - Stufe {2} verkauft, Stop auf Einstieg: {3} -> {4}',
+     '🪜 Stop ladder: {0} {1} - level {2} sold, stop moved to entry: {3} -> {4}',
+     '🪜 Stop merdiveni: {0} {1} - kademe {2} satıldı, stop giriş fiyatına: {3} -> {4}'),
+    ('🪜 Stop-Leiter: {0} {1} - Stufe {2} verkauft, Stop auf Kurs von Stufe {3}: {4} -> {5}',
+     '🪜 Stop-Leiter: {0} {1} - Stufe {2} verkauft, Stop auf Kurs von Stufe {3}: {4} -> {5}',
+     '🪜 Stop ladder: {0} {1} - level {2} sold, stop moved to the price of level {3}: {4} -> {5}',
+     '🪜 Stop merdiveni: {0} {1} - kademe {2} satıldı, stop kademe {3} fiyatına: {4} -> {5}'),
+    ('   🪜 Stop-Leiter: an - nach Stufe 1 Stop auf Einstieg, danach auf die vorige Stufe',
+     '   🪜 Stop-Leiter: an - nach Stufe 1 Stop auf Einstieg, danach auf die vorige Stufe',
+     '   🪜 Stop ladder: on - after level 1 stop to entry, then to the previous level',
+     "   🪜 Stop merdiveni: açık - kademe 1'den sonra stop girişe, sonra bir önceki kademeye"),
+    ('   🪜 Stop-Leiter: aus (.env STOP_LEITER)',
+     '   🪜 Stop-Leiter: aus (.env STOP_LEITER)',
+     '   🪜 Stop ladder: off (.env STOP_LEITER)',
+     '   🪜 Stop merdiveni: kapalı (.env STOP_LEITER)'),
 ]
 
 

@@ -3,6 +3,14 @@
 # |  NEXUS NATURE v15.8 - BRIDGEWATER EDITION                          |
 # |  Datei: nexus_ceo.py                                                |
 # |  Erstellt: 2026-07-14  |  Zuletzt geaendert: 2026-09-21            |
+# |  Aenderungen v15.24 (2026-10-08):                                   |
+# |    - Stop-Leiter: nach Mirror-TP-Stufe 1 Stop auf den Einstieg,    |
+# |      nach Stufe 2 auf den Kurs von Stufe 1, nach Stufe 3 auf den   |
+# |      Kurs von Stufe 2 (.env STOP_LEITER, Standard true)            |
+# |    - Gruppen-Limit: hoechstens MAX_JE_GRUPPE (Standard 2) Maerkte  |
+# |      je Gruppe offen (Energie, Metalle, Agrar, Krypto)             |
+# |    - Krypto-Erkennung nach Basis-Kuerzel statt Teilwort: Gasoline  |
+# |      ("SOL") galt als Krypto (Gremium 3/5, Wochenend-Scan)         |
 # |  Aenderungen v15.23 (2026-10-08):                                   |
 # |    - /handbuch (/handbook, /kilavuz): schickt das komplette Handbuch |
 # |      als Datei in der eigenen Sprache (/handbuch en = Englisch),   |
@@ -828,11 +836,16 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v15.23"                                       # steht in der Startmeldung
+NEXUS_VERSION        = "v15.24"                                       # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
 SL_MAX_PCT           = float(os.getenv("SL_MAX_PCT", "6.0"))          # v15.17: Obergrenze fuer diesen Mindestabstand in % (bleibt unter Kara Kugu -8%)
+STOP_LEITER          = os.getenv("STOP_LEITER", "true").strip().lower() not in ("false", "0", "nein", "no", "aus", "off")  # v15.24: Stop nach jeder Mirror-TP-Stufe nachziehen
+try:
+    MAX_JE_GRUPPE    = int(float(os.getenv("MAX_JE_GRUPPE", "2") or 0))  # v15.24: max. offene Maerkte je Gruppe (0 = aus)
+except ValueError:
+    MAX_JE_GRUPPE    = 2
 WIEDEREINSTIEG_SPERRE_STD = float(os.getenv("WIEDEREINSTIEG_SPERRE_STD", "6"))  # v15.18: so viele Stunden nach einer Schliessung kein neuer Einstieg in dasselbe Symbol/dieselbe Richtung (0 = aus)
 SCAN_MELDUNGEN       = os.getenv("SCAN_MELDUNGEN", "neu").strip().lower()  # v15.18: "neu" = Scan ohne Trade nur melden, wenn sich etwas aendert; "alle" = wie vorher
 
@@ -6089,7 +6102,7 @@ def safe_trade_size(size_eur_input, cfg, epic, is_manual=False):
             limit_eur = min(max_position_eur, balance * 0.50)
 
         # 4. Volatilitäts-Check (Risk Parity)
-        is_crypto = any(c in epic.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+        is_crypto = _krypto_kuerzel(epic) in ("BTC", "ETH", "SOL", "XRP")  # v15.24: GASOLINE ist kein SOL
         if is_crypto:
             final_eur *= 0.5  # Halbierung bei Krypto für gleiche Risiko-Wichtung
 
@@ -6422,18 +6435,72 @@ def check_spread_ok(epic, spread):
 def is_weekend():
     return datetime.now().weekday() >= 5
 
+# v15.24: Vorher wurde nach Teilwoertern gesucht - "GASOLINE" enthaelt "SOL" und galt als
+# Krypto (Gremium 3/5 statt 4/5, Wochenend-Scan, Krypto-Halbierung). Jetzt zaehlt nur das
+# Basis-Kuerzel vor _USD/_EUR bzw. vor USD/EUR im Epic. Die Liste der Coins ist dieselbe wie vorher.
+_KRYPTO_BASIS = {"BTC", "ETH", "XRP", "SOL", "LTC", "ADA", "DOT", "LINK", "DOGE", "AVAX",
+                 "MATIC", "BNB", "SHIB", "UNI", "ATOM"}
+
+
+def _krypto_kuerzel(name):
+    """Basis-Kuerzel eines Symbols/Epics: BTC_USD -> BTC, ETHEUR -> ETH, GASOLINE -> GASOLINE."""
+    basis = str(name or "").upper().replace("-", "_").replace("/", "_").split("_")[0]
+    for q in ("USDT", "USD", "EUR", "GBP"):
+        if basis.endswith(q) and len(basis) > len(q):
+            return basis[:-len(q)]
+    return basis
+
+
 def is_crypto(sym_key):
-    """Prueft ob ein Symbol Krypto ist. Dynamisch aus MARKET_CONFIG."""
+    """Prueft ob ein Symbol Krypto ist (Symbol-Name oder Epic, z.B. BTC_USD / BTCUSD)."""
     if not sym_key:
         return False
-    sym_upper = str(sym_key).upper().replace("-","_")
-    cfg = MARKET_CONFIG.get(sym_key) or MARKET_CONFIG.get(sym_upper)
+    s = str(sym_key).upper().replace("-", "_").replace("/", "_")
+    namen = {s}
+    cfg = MARKET_CONFIG.get(sym_key) or MARKET_CONFIG.get(s)
     if cfg:
-        epic = cfg.get("epic","").upper()
-        if any(c in epic for c in ["BTC","ETH","XRP","SOL","LTC","ADA","DOT","LINK","DOGE","AVAX","MATIC","BNB"]):
-            return True
-    crypto_kw = {"BTC","ETH","XRP","SOL","LTC","ADA","DOT","LINK","DOGE","AVAX","MATIC","BNB","SHIB","UNI","ATOM"}
-    return any(kw in sym_upper for kw in crypto_kw)
+        namen.add(str(cfg.get("epic", "")).upper())
+    for _k, _c in MARKET_CONFIG.items():
+        if str(_c.get("epic", "")).upper() == s:
+            namen.add(str(_k).upper())
+    return any(_krypto_kuerzel(n) in _KRYPTO_BASIS for n in namen)
+
+
+# v15.24 GRUPPEN-LIMIT: Maerkte, die meist gemeinsam steigen und fallen. Am 07.10. eroeffnete
+# der Bot in derselben Minute Brent, Heizoel, Benzin und Kupfer SELL - eine Wette, viermal gesetzt.
+_MARKT_GRUPPEN = {
+    "ENERGIE": {"OIL_CRUDE", "OIL_BRENT", "NATURAL_GAS", "NATURALGAS", "HEATING_OIL", "HEATINGOIL", "GASOLINE"},
+    "METALLE": {"GOLD", "SILVER", "PLATINUM", "PALLADIUM", "COPPER", "ALUMINUM", "ZINC", "MZN3", "NICKEL"},
+    "AGRAR": {"WHEAT", "CORN", "SOYBEANS", "SOYBEAN", "COFFEE", "COFFEEARABICA", "SUGAR", "UKSUGAR",
+              "COTTON", "USCOTTON", "COCOA", "USCOCOA"},
+}
+
+
+def markt_gruppe(sym_or_epic):
+    """Gruppe eines Symbols oder Epics (ENERGIE, METALLE, AGRAR, KRYPTO) oder None."""
+    s = str(sym_or_epic or "").upper()
+    for g, mitglieder in _MARKT_GRUPPEN.items():
+        if s in mitglieder:
+            return g
+    if is_crypto(s):
+        return "KRYPTO"
+    return None
+
+
+def gruppen_belegt(sym, epic, positionen):
+    """Epics offener Positionen aus derselben Gruppe wie sym/epic (ohne epic selbst)."""
+    g = markt_gruppe(sym) or markt_gruppe(epic)
+    if not g:
+        return None, []
+    belegt = set()
+    for px in positionen or []:
+        try:
+            e = px["market"]["epic"]
+        except Exception:
+            continue
+        if e != epic and markt_gruppe(e) == g:
+            belegt.add(e)
+    return g, sorted(belegt)
 
 
 def check_weekend_allowed(sym_key):
@@ -6744,6 +6811,8 @@ def mirror_orig_size(state, mkey, deal_id, pos_size, aktive_deals):
         for i in (1, 2, 3):
             state.pop(f"mirror_l{i}_{mkey}", None)
             state.pop(f"mirror_warn{i}_{mkey}", None)
+            state.pop(f"mirror_p{i}_{mkey}", None)   # v15.24 Stop-Leiter
+            state.pop(f"mirror_lw{i}_{mkey}", None)
         rec = {"size": pos_size, "deal": deal_id}
         state["mirror_orig_" + mkey] = rec
         _mirror_persist(state)
@@ -6988,6 +7057,8 @@ def update_trailing_sl(h):
                                             ok_mtp, sold, info_mtp = partial_close_position(h, epic, direction, close_size)
                                         if ok_mtp or info_mtp in ("UNKLAR", "GEGENPOSITION"):
                                             state[key] = True  # Stufe erledigt - nie doppelt verkaufen
+                                            if ok_mtp:
+                                                state[f"mirror_p{i}_{mkey}"] = round(current, 5)  # v15.24: fuer die Stop-Leiter
                                             _mirror_persist(state)
                                         if ok_mtp:
                                             rest_size = max(rest_size - sold, 0.0)
@@ -7036,6 +7107,70 @@ def update_trailing_sl(h):
                         except Exception as _mtp_e:
                             logging.debug(f"Mirror-TP {epic}: {_mtp_e}")
                     # ─── ENDE MIRROR-TP ──────────────────────────────────────
+
+                    # v15.24 STOP-LEITER: Hat eine Position Stufen verkauft, darf der Rest nicht mehr
+                    # mit dem vollen Stop schliessen. Stufe 1 -> Stop auf den Einstieg, Stufe 2 -> auf
+                    # den Verkaufskurs von Stufe 1, Stufe 3 -> auf den von Stufe 2. Der Stop wird nur
+                    # enger, nie weiter. Liegt das Ziel schon jenseits des Kurses (z.B. zwei Stufen im
+                    # selben Lauf verkauft, oder der Kurs ist zurueckgelaufen), nimmt der Bot die naechst
+                    # tiefere Sprosse (bis hinunter zum Einstieg). Laeuft auch, wenn die ATR fehlt.
+                    if STOP_LEITER and not _mtp_zu:
+                        try:
+                            _lk = _mirror_key(epic, direction, entry)
+                            _k = 0
+                            for _i in (1, 2, 3):
+                                if not state.get(f"mirror_l{_i}_{_lk}"):
+                                    break
+                                _k = _i
+                            if _k > 0:
+                                _vz = 1 if direction == "BUY" else -1
+                                _ask = float(positions[0]["market"].get("offer", 0) or current)
+                                _tol = entry * 0.0001          # Rundung des Brokers (Tick) nicht als Verbesserung zaehlen
+                                _sprossen = []                 # (Ziel, Stufe des Kurses; 0 = Einstieg), beste zuerst
+                                for _j in range(_k - 1, 0, -1):
+                                    _pv = state.get(f"mirror_p{_j}_{_lk}")
+                                    if _pv:
+                                        _sprossen.append((round(float(_pv), 5), _j))
+                                _sprossen.append((round(entry * (1 + _vz * 0.0003), 5), 0))
+                                _wahl = None
+                                for _ziel, _wo in _sprossen:
+                                    _gueltig = (_ziel < current) if direction == "BUY" else (_ziel > _ask)
+                                    _besser = (_ziel > cur_sl + _tol) if direction == "BUY" \
+                                        else (cur_sl <= 0 or _ziel < cur_sl - _tol)
+                                    if _gueltig and _besser:
+                                        _wahl = (_ziel, _wo)
+                                        break
+                                    if not _besser:
+                                        break      # Stop sitzt schon mindestens so eng - tiefere Sprossen waeren weiter
+                                if _wahl:
+                                    _ziel, _wo = _wahl
+                                    r_lt = requests.put(CAPITAL_URL + "/positions/" + deal_id,
+                                                        json=_sl_update_body(p, _ziel), headers=h, timeout=10)
+                                    if r_lt.status_code == 200:
+                                        _sl_alt, cur_sl = cur_sl, _ziel
+                                        updated += 1
+                                        logging.info(f"Stop-Leiter: {instrument} {direction} Stufe {_k} "
+                                                     f"SL {_sl_alt:g} -> {_ziel:g}")
+                                        try:
+                                            if _wo == 0:
+                                                bot.send_message(MY_CHAT_ID,
+                                                    f"🪜 Stop-Leiter: {instrument} {direction} - Stufe {_k} verkauft, "
+                                                    f"Stop auf Einstieg: {_sl_alt:g} -> {_ziel:g}")
+                                            else:
+                                                bot.send_message(MY_CHAT_ID,
+                                                    f"🪜 Stop-Leiter: {instrument} {direction} - Stufe {_k} verkauft, "
+                                                    f"Stop auf Kurs von Stufe {_wo}: {_sl_alt:g} -> {_ziel:g}")
+                                        except Exception:
+                                            pass
+                                    else:
+                                        _wk = f"mirror_lw{_k}_{_lk}"
+                                        if not state.get(_wk):
+                                            state[_wk] = True
+                                            _mirror_persist(state)
+                                            logging.warning(f"Stop-Leiter {instrument} {direction} Stufe {_k}: "
+                                                            f"SL {_ziel:g} abgelehnt: {r_lt.status_code} {r_lt.text[:120]}")
+                        except Exception as _lt_e:
+                            logging.warning(f"Stop-Leiter {epic}: {_lt_e}")
 
                     # 2. TRAILING SL erst ab +1.5% aktivieren
                     if profit_pct < 1.5 or _mtp_zu:
@@ -7890,7 +8025,7 @@ def _format_kandidaten(kandidaten):
             lines.append("  FIBONACCI: Veri yok")
 
         # Asset sinifina gore kaynak oneri
-        if any(c in sym.upper() for c in ["BTC","ETH","SOL","XRP","CRYPTO"]):
+        if _krypto_kuerzel(sym) in ("BTC", "ETH", "SOL", "XRP") or "CRYPTO" in sym.upper():  # v15.24
             asset_sources = "@zerohedge, @Danny_Crypton, @unusual_whales, alternative.me/fng"
             search_terms  = f'"{sym} price outlook today", "bitcoin market sentiment today"'
         elif any(c in sym.upper() for c in ["GOLD","SILVER","XAU","XAG"]):
@@ -7981,7 +8116,7 @@ def _format_kandidaten_strict(kandidaten) -> str:
         lines.append(f"  WICHTIG: Erfinde keine Zahlen. Nutze nur die Fakten oben.")
 
         # 5. Quellen aus der alten Funktion uebernehmen
-        if any(c in sym.upper() for c in ["BTC","ETH","SOL","XRP","CRYPTO"]):
+        if _krypto_kuerzel(sym) in ("BTC", "ETH", "SOL", "XRP") or "CRYPTO" in sym.upper():  # v15.24
             asset_sources = "@zerohedge, @Danny_Crypton, @unusual_whales"
             search_terms  = f'"{sym} price outlook today"'
         elif any(c in sym.upper() for c in ["GOLD","SILVER","XAU","XAG"]):
@@ -8977,10 +9112,18 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
                        f"(WIEDEREINSTIEG_SPERRE_STD={WIEDEREINSTIEG_SPERRE_STD:g})")
                 results.append(msg); logging.info(msg); continue
         if not epic_positions:
-            _offen_n = len(get_positions(h) or [])
+            _offen_pos = get_positions(h) or []
+            _offen_n = len(_offen_pos)
             if _offen_n >= MAX_POSITIONEN:
                 msg = f"⛔ {sym}: MAX POSITIONEN {_offen_n}/{MAX_POSITIONEN} erreicht - nicht eröffnet"
                 results.append(msg); logging.warning(msg); continue
+            # v15.24 GRUPPEN-LIMIT (.env MAX_JE_GRUPPE, 0 = aus)
+            if MAX_JE_GRUPPE > 0:
+                _grp, _grp_offen = gruppen_belegt(sym, epic, _offen_pos)
+                if _grp and len(_grp_offen) >= MAX_JE_GRUPPE:
+                    msg = (f"⛔ {sym}: Gruppen-Limit {len(_grp_offen)}/{MAX_JE_GRUPPE} - aus derselben Gruppe "
+                           f"schon offen: {', '.join(_grp_offen)} - nicht eröffnet")
+                    results.append(msg); logging.warning(msg); continue
 
         izinli, neden = pyramiding_kontrol(h, epic, sym)
         if not izinli:
@@ -9552,6 +9695,10 @@ def position_detail_lines(p, h, state=None):
         else:
             lines.append("   🪜 Mirror-TP: aus (.env)")
         lines.append("   Breakeven-SL ab +1.0% | Trailing-SL ab +1.5% (5% unter dem Hoch)")
+        if STOP_LEITER:   # v15.24
+            lines.append("   🪜 Stop-Leiter: an - nach Stufe 1 Stop auf Einstieg, danach auf die vorige Stufe")
+        else:
+            lines.append("   🪜 Stop-Leiter: aus (.env STOP_LEITER)")
     except Exception as e:
         logging.warning(f"Positions-Detail: {e}")
     return lines

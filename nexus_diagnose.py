@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NEXUS - Diagnose fuer v15.16 bis v15.22   (NUR LESEND)
+NEXUS - Diagnose fuer v15.16 bis v15.24   (NUR LESEND)
 
 Das Skript aendert nichts: Es liest nexus_ceo.py, die .env, die Logdateien und holt
 von Capital.com nur Daten ab (GET). Es eroeffnet, aendert und schliesst keine Position.
@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "6 (fuer NEXUS v15.22)"
+VERSION = "7 (fuer NEXUS v15.24)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -45,7 +45,7 @@ KURZ_MARKE = "KURZFASSUNG"
 ZEIGEN = [
     "BOT_LANGUAGE", "SCAN_INTERVAL_SEC", "TRADING_ASSETS", "POSITION_SIZE_PCT", "MIN_POSITION_EUR",
     "MAX_POSITION_EUR", "MAX_POSITIONEN", "MAX_SPREAD", "GREMIUM_MIN_JA", "GREMIUM_MIN_JA_KRYPTO",
-    "KRYPTO_NACHT_SPERRE", "AUTO_EXIT", "SL_ATR_MULT", "SL_MAX_PCT", "ATR_DAILY_PERIOD", "ATR_DAILY_ORAN",
+    "KRYPTO_NACHT_SPERRE", "AUTO_EXIT", "SL_ATR_MULT", "SL_MAX_PCT", "STOP_LEITER", "MAX_JE_GRUPPE", "ATR_DAILY_PERIOD", "ATR_DAILY_ORAN",
     "MIRROR_TP_ENABLED", "MIRROR_TP_LEVEL_1_MULT", "MIRROR_TP_LEVEL_2_MULT", "MIRROR_TP_LEVEL_3_MULT",
     "MIRROR_TP_CLOSE_PCT", "MAX_VERLUSTE_PRO_TAG", "WIEDEREINSTIEG_SPERRE_STD", "SCAN_MELDUNGEN",
     "PROVIDER_ORDER", "OLLAMA_PRIORITY", "OLLAMA_MODEL", "GEMINI_MODEL_1", "GEMINI_CHAIN_MAX",
@@ -70,9 +70,12 @@ EREIGNISSE = [
     ("Trailing-Stop wirklich nachgezogen", re.compile(r"Trailing SL: .* Sv:\d+ Peak:.*->")),
     ("Trailing-Stop fehlgeschlagen", "Trailing SL basarisiz"),
     ("Teilausstieg bei mehreren Positionen", "Partial Exit:"),
+    ("Stop-Leiter nachgezogen", re.compile(r"Stop-Leiter: .* Stufe \d SL ")),
+    ("Stop-Leiter abgelehnt", re.compile(r"Stop-Leiter .* abgelehnt: ")),
     ("Schwarzer Schwan", "KARA KUGU"),
     ("Sperre: Wiedereinstieg", "Wiedereinstieg gesperrt"),
     ("Sperre: maximale Positionen", "MAX POSITIONEN"),
+    ("Sperre: Gruppen-Limit", "Gruppen-Limit "),
     ("Sperre: Verluste des Tages", "HARD BLOK"),
     ("Sperre: Spread", "SPREAD BLOK"),
     ("Sperre: Markt geschlossen", re.compile(r"\bKAPALI \S+")),
@@ -197,7 +200,7 @@ def teil0(bot_dir, env, doppelt):
             stand = "v15.10 bis v15.15"
         else:
             stand = "aelter als v15.10"
-        merkmale = [("Modell-Schleife Ersatz-KI (v15.22)", "def ai_chain_call("), ("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
+        merkmale = [("Stop-Leiter/Gruppen-Limit (v15.24)", "def gruppen_belegt("), ("Modell-Schleife Ersatz-KI (v15.22)", "def ai_chain_call("), ("Sprachen (v15.19)", "def set_language("), ("Wiedereinstiegs-Sperre (v15.18)", "def letzte_schliessung("),
                     ("Stop aus der Tagesspanne (v15.17)", "def sl_min_distance("), ("Schliess-Melder (v15.16)", "def closed_position_watch(")]
         K["stand"] = stand
         print("  Code-Stand: %s   (%d Zeilen, geaendert %s)" % (
@@ -369,7 +372,8 @@ def teil1(bot_dir, days):
               ", ".join("%s x Tagesspanne: %d" % (k, n) for k, n in sorted(sl_mult.items())))
 
     for name in ("Order gesendet, Position NICHT gefunden", "Order abgelehnt", "Gegensignal (EXIT)",
-                 "Sperre: Wiedereinstieg", "Sperre: maximale Positionen", "Trailing-Stop wirklich nachgezogen",
+                 "Sperre: Wiedereinstieg", "Sperre: maximale Positionen", "Sperre: Gruppen-Limit",
+                 "Stop-Leiter nachgezogen", "Stop-Leiter abgelehnt", "Trailing-Stop wirklich nachgezogen",
                  "Warnung im Stop-Lauf (Trailing SL epic)", "Schwarzer Schwan",
                  "KI: Modell automatisch ersetzt", "KI: kein Ersatzmodell bestand die Pruefung"):
         if letzte.get(name):

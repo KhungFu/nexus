@@ -1,6 +1,6 @@
-# NEXUS CEO – Operating Manual (v15.23)
+# NEXUS CEO – Operating Manual (v15.24)
 
-NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.22 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
+NEXUS CEO is a Telegram bot that uses the Capital.com API to open CFD positions on commodities and crypto on its own, protect them, and sell them again in levels. This manual describes v15.24 as it stands in the code. It describes the technology and is not investment advice. CFD trading can lead to the loss of the money you put in; use a demo account first.
 
 Other languages: [Deutsch](MANUAL.de.md) · [Türkçe](MANUAL.tr.md)
 
@@ -135,7 +135,7 @@ Only the scan reacts to an opposite signal. The exit monitor closes by its own r
 
 | Interval | Task |
 | --- | --- |
-| every 5 minutes | Protection run: Black Swan, Breakeven, Mirror-TP, Trailing stop, reporting closed positions |
+| every 5 minutes | Protection run: Black Swan, Breakeven, Mirror-TP, stop ladder, Trailing stop, reporting closed positions |
 | every 15 minutes | Daily target watcher: asks with Yes/No buttons whether a position at the daily target should be sold |
 | every 30 minutes | Exit monitor: with `AUTO_EXIT=true`, closes a position when 3 of 5 exit rules agree |
 | every 60 minutes | Collect news (RSS, X) |
@@ -149,7 +149,7 @@ For automatic trades, the `.env` alone determines the size; the number the AI wr
 
 1. Base = account × `POSITION_SIZE_PCT`, at least `MIN_POSITION_EUR`.
 2. Upper limit = the smallest of these three values: `MAX_POSITION_EUR` (if set), the risk-parity limit (two thirds of the account) and 50% of the account.
-3. For epics with BTC, ETH, SOL or XRP in the name, the amount is halved.
+3. For BTC, ETH, SOL and XRP the amount is halved.
 4. The amount is converted into units using the live price and the EUR/USD rate.
 5. If the result is below the exchange's minimum size, the bot uses the minimum size. If even the minimum size costs more than the upper limit, there is no trade.
 
@@ -183,6 +183,7 @@ The Take Profit comes from the AI. If it is missing or closer than 0.3% to the p
 | Price reaches entry ± 0.5 × hourly ATR | Mirror-TP level 1: sells 25% of the original size |
 | Price reaches ± 1.0 × hourly ATR | Mirror-TP level 2: another 25% |
 | Price reaches ± 1.5 × hourly ATR | Mirror-TP level 3: another 25% |
+| A level has been sold | Stop ladder: after level 1 the stop moves to the entry (plus 0.03%), after level 2 to the sale price of level 1, after level 3 to that of level 2. The stop is only tightened, never widened. Switch `STOP_LEITER` |
 | Profit from 1.0% | Breakeven: stop to the entry price (plus 0.03%) |
 | Profit from 1.5% | Trailing stop: 5% behind the best price, only ever tightened |
 | Profit from 2% with several positions in the same symbol | Closes the smallest position |
@@ -190,6 +191,8 @@ The Take Profit comes from the AI. If it is missing or closer than 0.3% to the p
 | Price reaches the Take Profit | Capital.com closes the rest |
 
 For commodities, one hourly ATR is about a fifth of the daily range. The three levels are therefore at about 0.1, 0.2 and 0.3 daily ranges, the stop at a whole one. Profits per level are therefore much smaller than a loss at the stop.
+
+With the stop ladder, a position that has sold level 1 can no longer close at the full stop. If the price is already beyond the new stop at the next run (for example because Capital.com rejected the stop as too close), the old stop stays until the price comes back. Positions that sold a level before v15.24 get the stop at the entry.
 
 ### Rules for the partial sale
 
@@ -211,6 +214,7 @@ Python checks these rules itself; no AI can override them. “Hard-coded” mean
 | Rule | Threshold | Effect | Setting |
 | --- | --- | --- | --- |
 | Maximum positions | 5 open positions | No new position. At 5 or more, no adding and no reversing either | `MAX_POSITIONEN` |
+| Group limit | 2 markets per group | No new market from a group in which 2 markets are already open. Groups: energy (Crude, Brent, natural gas, heating oil, gasoline), metals (gold, silver, platinum, palladium, copper, aluminium, zinc, nickel), agriculture (wheat, corn, soybeans, coffee, sugar, cotton, cocoa) and crypto. Adding to an open market does not count | `MAX_JE_GRUPPE` |
 | Re-entry lock | 6 hours after a close | No new entry in the same symbol in the same direction | `WIEDEREINSTIEG_SPERRE_STD` |
 | Loss lock | 3 Stop Loss losses per symbol and day | Symbol locked for today; a warning from the first loss. A stop at entry does not count | `MAX_VERLUSTE_PRO_TAG` |
 | Daily loss stop | Account value 5% or 40 EUR below the day's high | No new trades today | hard-coded |
@@ -352,6 +356,7 @@ The file is next to `nexus_ceo.py`. Changes take effect after a restart. Comment
 | `MIN_POSITION_EUR` | 50.0 | Minimum amount per position |
 | `MAX_POSITION_EUR` | empty | Fixed upper limit per position; empty = risk-parity limit only |
 | `MAX_POSITIONEN` | 5 | Maximum number of open positions |
+| `MAX_JE_GRUPPE` | 2 | At most this many markets per group open at the same time; 0 = off |
 | `MAX_SPREAD` | 0.5 | Highest spread as a price distance (ask minus bid), not a percentage; empty = no limit |
 | `GREMIUM_MIN_JA` | 4 | YES votes needed out of 5 |
 | `GREMIUM_MIN_JA_KRYPTO` | 3 | The same for crypto |
@@ -369,6 +374,7 @@ The file is next to `nexus_ceo.py`. Changes take effect after a restart. Comment
 | `MIRROR_TP_ENABLED` | true | Level selling on or off |
 | `MIRROR_TP_LEVEL_1_MULT`, `_2_`, `_3_` | 0.5, 1.0, 1.5 | Distance of the three levels in hourly ATR |
 | `MIRROR_TP_CLOSE_PCT` | 25.0 | Share of the position per level |
+| `STOP_LEITER` | true | Move the stop up after each sold level; false = off |
 | `MAX_VERLUSTE_PRO_TAG` | 3 | Stop Loss losses per symbol and day until the lock; 0 = off |
 | `WIEDEREINSTIEG_SPERRE_STD` | 6 | Hours until re-entry after a close; 0 = off |
 
@@ -489,10 +495,9 @@ The log stays in the original language (German and Turkish mixed); only the Tele
 
 ### Bugs and quirks in the code
 
-- **Gasoline counts as crypto.** The name GASOLINE contains “SOL”. The bot therefore halves the position size, requires only 3 of 5 committee votes and applies the crypto rules, including at the weekend.
 - **Halving for four coins only.** The amount is halved for BTC, ETH, SOL and XRP. Other coins run at full size.
 - **Twelve coins do not count as crypto.** The bot recognizes crypto by a fixed list of names. AAVE, BCH, NEAR, ARB, OP, XLM, ALGO, VET, HBAR, IOTA, TRX and XTZ from the supplied market list are not on it. They follow the commodity rules: 4 of 5 committee votes and no trading at the weekend.
-- **Correlation is not checked.** Related markets such as Crude, Heating Oil and Gasoline count as independent positions.
+- **Correlation is only checked roughly.** The group limit counts markets per group, not direction or size. Oil and copper are in different groups, even though they often move together.
 - **No opposite signal from 5 positions.** With 5 or more open positions the bot aborts before any check. An opposite signal then does not close an existing position either.
 - **Statistics and daily target from the bot database are incomplete.** The database only knows closes that the bot triggered itself. The evaluation in the Capital app is authoritative.
 - **The manual trade** uses neither the noise protection nor `MAX_POSITION_EUR`.
@@ -505,7 +510,7 @@ The log stays in the original language (German and Turkish mixed); only the Tele
 - **Close message:** The bot does not see a position that is opened and closed again within 5 minutes.
 - **Trading blocks** exist only in memory and do not survive a restart.
 - **Stopped bot:** No Breakeven, no level selling, no Trailing. Only stop and target at Capital.com keep working.
-- **Profits and losses are unequal in size.** The levels are at about 0.1 to 0.3 daily ranges, the stop at a whole one. A high hit rate alone is therefore not enough for a profit.
+- **Profits and losses are unequal in size.** With the default levels (0.5 / 1.0 / 1.5) the levels are at about 0.1 to 0.3 daily ranges, the stop at a whole one. All three partial sales together then bring less than the stop on the rest costs. Larger levels (for example 1.0 / 2.0 / 3.0) and the stop ladder soften this. A high hit rate alone is not enough for a profit.
 
 ### Limits of the translation
 
