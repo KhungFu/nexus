@@ -866,6 +866,13 @@ GREMIUM_GUELTIG_STD    = _env_zahl("GREMIUM_GUELTIG_STD", 4)       # ein Beschlu
 GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 2, int)     # gleichzeitige KI-Aufrufe
 GREMIUM_BEWERTUNG_STD  = _env_zahl("GREMIUM_BEWERTUNG_STD", 24)    # nach so vielen Stunden wird jede Stimme am Kurs gemessen
 GREMIUM_GEWICHTUNG     = os.getenv("GREMIUM_GEWICHTUNG", "true").split("#")[0].strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
+# Vorsitz: claude = Claude Code CLI (claude -p) mit deinem Claude-Abo; kette = dieselbe KI-Kette wie die Mitglieder
+GREMIUM_VORSITZ        = (os.getenv("GREMIUM_VORSITZ", "claude").split("#")[0].strip().lower() or "claude")
+GREMIUM_VORSITZ_ERSATZ = os.getenv("GREMIUM_VORSITZ_ERSATZ", "false").split("#")[0].strip().lower() in ("true", "1", "ja", "yes", "on")  # Claude faellt aus -> KI-Kette fragen (sonst kein Trade)
+CLAUDE_CLI             = (os.getenv("CLAUDE_CLI", "claude").split("#")[0].strip() or "claude")
+CLAUDE_MODELL_ENV      = (os.getenv("CLAUDE_MODELL", "sonnet").split("#")[0].strip() or "sonnet")
+CLAUDE_MODELL          = "sonnet" if "haiku" in CLAUDE_MODELL_ENV.lower() else CLAUDE_MODELL_ENV  # mindestens Sonnet
+CLAUDE_TIMEOUT         = _env_zahl("CLAUDE_TIMEOUT", 180, int)
 WIEDEREINSTIEG_SPERRE_STD = float(os.getenv("WIEDEREINSTIEG_SPERRE_STD", "6"))  # v15.18: so viele Stunden nach einer Schliessung kein neuer Einstieg in dasselbe Symbol/dieselbe Richtung (0 = aus)
 SCAN_MELDUNGEN       = os.getenv("SCAN_MELDUNGEN", "neu").strip().lower()  # v15.18: "neu" = Scan ohne Trade nur melden, wenn sich etwas aendert; "alle" = wie vorher
 
@@ -9923,6 +9930,81 @@ def _gremium_ask(prompt, system):
     return call_ai(prompt, system=system, use_grounding=False)
 
 
+# Umgebung fuer claude -p: nur was die CLI braucht - keine Schluessel aus der .env (TG_TOKEN, CAPITAL_*, ...)
+_CLAUDE_ENV_ERLAUBT = ("HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SHELL", "TERM",
+                       "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+                       "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE")
+
+
+def _claude_cli_pfad():
+    """Pfad zur claude-CLI oder None. Der Dienst (systemd) kennt ~/.local/bin oft nicht im PATH."""
+    import shutil
+    p = os.path.expanduser(CLAUDE_CLI)
+    if os.path.sep in p:
+        return p if os.path.isfile(p) and os.access(p, os.X_OK) else None
+    return shutil.which(p) or shutil.which(p, path=os.pathsep.join(
+        [os.path.expanduser("~/.local/bin"), "/usr/local/bin", "/usr/bin", "/opt/node22/bin"]))
+
+
+def _claude_ask(prompt, system):
+    """v16.0: Vorsitz ueber Claude Code (claude -p) mit dem eigenen Claude-Abo.
+    Keine Werkzeuge (--tools ""), keine gespeicherte Sitzung, leerer Arbeitsordner,
+    keine .env-Schluessel in der Umgebung. Rueckgabe: Antworttext oder '⚠️ ...'."""
+    import subprocess, tempfile
+    exe = _claude_cli_pfad()
+    if not exe:
+        logging.error(f"Claude-Vorsitz Fehler: claude-CLI nicht gefunden (CLAUDE_CLI={CLAUDE_CLI})")
+        return "⚠️ claude-CLI nicht gefunden"
+    wd = os.path.join(tempfile.gettempdir(), "nexus_vorsitz")
+    os.makedirs(wd, exist_ok=True)
+    env = {k: v for k, v in os.environ.items()
+           if k in _CLAUDE_ENV_ERLAUBT or k.startswith(("CLAUDE_CODE_", "XDG_"))}
+    env["PATH"] = os.pathsep.join([os.path.dirname(exe), os.path.expanduser("~/.local/bin"), env.get("PATH", "/usr/bin:/bin")])
+    env.setdefault("HOME", os.path.expanduser("~"))
+    cmd = [exe, "-p", "--model", CLAUDE_MODELL, "--output-format", "json", "--tools", "",
+           "--system-prompt", lang_ai(system), "--no-session-persistence", "--strict-mcp-config"]
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, cwd=wd, env=env)
+    except subprocess.TimeoutExpired:
+        logging.error(f"Claude-Vorsitz Fehler: keine Antwort in {CLAUDE_TIMEOUT}s")
+        return "⚠️ claude: Zeitüberschreitung"
+    except Exception as e:
+        logging.error(f"Claude-Vorsitz Fehler: {e}")
+        return f"⚠️ claude: {e}"
+    d = None
+    for zeile in reversed((r.stdout or "").strip().splitlines()):
+        if zeile.strip().startswith("{"):
+            try:
+                d = json.loads(zeile)
+                break
+            except ValueError:
+                continue
+    if not isinstance(d, dict) or d.get("is_error") or d.get("subtype") not in (None, "success") or not d.get("result"):
+        grund = (d or {}).get("result") if isinstance(d, dict) else None
+        grund = grund or (r.stderr or r.stdout or "").strip()[-300:] or f"Exit {r.returncode}"
+        logging.error(f"Claude-Vorsitz Fehler (Exit {r.returncode}): {str(grund)[:300]}")
+        return f"⚠️ claude: {str(grund)[:200]}"
+    logging.info(f"[OK] Claude-Vorsitz ({CLAUDE_MODELL}) {time.time() - t0:.0f}s")
+    return str(d["result"])
+
+
+def _gremium_vorsitz_ask(prompt, system):
+    """Vorsitz fragen: Claude (Standard) oder die KI-Kette. Faellt Claude aus, nur mit
+    GREMIUM_VORSITZ_ERSATZ=true die Kette - sonst entscheidet niemand und es gibt keinen Trade."""
+    if GREMIUM_VORSITZ != "claude":
+        return _gremium_ask(prompt, system)
+    res = _claude_ask(prompt, system)
+    if res.startswith("⚠️") and GREMIUM_VORSITZ_ERSATZ:
+        logging.warning("Claude-Vorsitz ausgefallen - KI-Kette entscheidet (GREMIUM_VORSITZ_ERSATZ=true)")
+        return _gremium_ask(prompt, system)
+    return res
+
+
+def _gremium_vorsitz_name():
+    return f"Claude {CLAUDE_MODELL}" if GREMIUM_VORSITZ == "claude" else "KI-Kette"
+
+
 def gremium_zyklus():
     """Ein Scan im Gremium-Modus. Rueckgabe (analysis, erlaubte_signale) fuer execute_nexus_trade."""
     if not _GREMIUM_LOCK.acquire(blocking=False):
@@ -9971,7 +10053,8 @@ def gremium_zyklus():
             vs = None
             karar, grund = "BEKLE", erg.get("grund", "")
             if erg["richtung"]:
-                vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_ask, kurs=info["kurs"])
+                vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_vorsitz_ask, kurs=info["kurs"])
+                vs["wer"] = _gremium_vorsitz_name()
                 if vs.get("ok") and vs["karar"] == "UYGULA":
                     karar, grund = "UYGULA", ""
                     sl, tp = vs["sl"], vs["tp"]
@@ -10009,7 +10092,19 @@ def gremium_zyklus():
 
 @bot.message_handler(commands=CMD('gremium'))
 def handle_gremium(message):
-    """v16.0: /gremium - Glaubwuerdigkeit der Mitglieder und die letzten Beschluesse."""
+    """v16.0: /gremium - Glaubwuerdigkeit der Mitglieder und die letzten Beschluesse.
+    /gremium test - prueft, ob der Vorsitz (claude -p) antwortet."""
+    teile = (message.text or "").split()
+    if len(teile) > 1 and teile[1].lower() in ("test", "prüfen", "pruefen", "kontrol"):
+        def _test():
+            t0 = time.time()
+            res = _claude_ask('Antworte nur mit JSON: {"karar": "BEKLE", "gerekce": "Test"}', "Du bist ein Test.") \
+                if GREMIUM_VORSITZ == "claude" else _gremium_ask('Antworte nur mit JSON: {"karar": "BEKLE"}', "Test")
+            ok = not res.startswith("⚠️") and _NG is not None and _NG.vorsitz_lesen(res) is not None
+            _bot_send_raw(MY_CHAT_ID, ("✅ " if ok else "❌ ") + f"Vorsitz {_gremium_vorsitz_name()}: "
+                          + (f"antwortet ({time.time() - t0:.0f}s)" if ok else str(res)[:300]))
+        threading.Thread(target=_test, daemon=True).start()
+        return
     if not gremium_aktiv():
         _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {'alter Modus (GREMIUM_MODUS=regeln)' if _NG else 'nexus_gremium.py fehlt'}")
         return
@@ -12010,6 +12105,17 @@ Komutlar: /help
     if gremium_aktiv():  # v16.0
         konfig_uyarilar.append(f"🏛️ Gremium: 11 Mentoren, Mehrheit {GREMIUM_MEHRHEIT:g}/11 (Krypto am Wochenende {GREMIUM_MEHRHEIT_KRYPTO:g}/11), "
                                f"höchstens {GREMIUM_MAX_KANDIDATEN} Märkte je Scan - /gremium")
+        if GREMIUM_VORSITZ == "claude":
+            _cli = _claude_cli_pfad()
+            if _cli:
+                konfig_uyarilar.append(f"👔 Vorsitz: Claude ({CLAUDE_MODELL}) über {_cli} - Anmeldung prüfen: /gremium test")
+            else:
+                konfig_uyarilar.append(f"❌ Vorsitz: claude-CLI nicht gefunden (CLAUDE_CLI={CLAUDE_CLI}) - "
+                                       + ("die KI-Kette entscheidet" if GREMIUM_VORSITZ_ERSATZ else "KEIN Trade, bis Claude Code installiert ist"))
+            if CLAUDE_MODELL != CLAUDE_MODELL_ENV:
+                konfig_uyarilar.append(f"⚠️ CLAUDE_MODELL={CLAUDE_MODELL_ENV} ist kleiner als Sonnet - nutze {CLAUDE_MODELL}")
+        else:
+            konfig_uyarilar.append("👔 Vorsitz: KI-Kette (GREMIUM_VORSITZ=kette)")
     elif GREMIUM_MODUS == "ki":
         konfig_uyarilar.append("⚠️ Gremium: nexus_gremium.py fehlt - alter Ablauf aktiv")
     else:

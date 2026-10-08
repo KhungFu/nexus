@@ -275,6 +275,9 @@ _VORSITZ_SYSTEM = (
     "2. Prüfe, ob die Minderheit ein Risiko nennt, das die Mehrheit übersehen hat.\n"
     "3. Entscheide UYGULA (Beschluss ausführen) oder BEKLE (stoppen).\n"
     "Du darfst die Richtung NICHT ändern. Stoppe nur mit einem konkreten Grund aus den Daten.\n"
+    "Wichtig: Python verkleinert die Position NICHT wegen Terminen, Korrelation zu offenen Positionen oder "
+    "Unsicherheit - die Größe kommt fest aus den Einstellungen. Ist eines dieser Risiken zu groß, ist BEKLE "
+    "deine einzige Möglichkeit, es zu vermeiden.\n"
     "Schlage Stop-Loss und Take-Profit als Preise vor, passend zur Tagesspanne (ATR) im Dossier; "
     "Python prüft und korrigiert sie.\n\n" + _RAHMEN + "\n\n"
     'Antworte NUR mit JSON: {"karar": "UYGULA" | "BEKLE", "sl": Preis, "tp": Preis, '
@@ -642,6 +645,8 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
             else:
                 z.append((T["vorsitz_ok"] if vorsitz_erg["karar"] == "UYGULA" else T["vorsitz_stop"])
                          + (" - " + vorsitz_erg["gerekce"] if vorsitz_erg.get("gerekce") else ""))
+            if vorsitz_erg.get("wer"):
+                z[-1] = z[-1].replace(":", " (%s):" % vorsitz_erg["wer"], 1)
     else:
         grund = ergebnis.get("grund") or "keine_mehrheit"
         z.append(T[grund].format(a=ergebnis["antworten"], n=ergebnis["mitglieder"], min=min_antworten,
