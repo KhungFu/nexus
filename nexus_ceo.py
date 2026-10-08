@@ -8925,8 +8925,20 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
         logging.debug(f"Schliess-Melder vor Trade: {_cw_e}")
     
     # REGEL 2: Max Positionen (.env: MAX_POSITIONEN, Standard 5)
+    # v16.0: Bei vollem Depot duerfen Gegensignale offene Positionen noch SCHLIESSEN - vorher kam
+    # hier jede Zeile weg, auch ein Ausstieg. Neue Positionen und Aufstocken bleiben gesperrt.
     if len(current_positions) >= MAX_POSITIONEN:
-        return f"⛔ MAX POSITIONEN: {len(current_positions)}/{MAX_POSITIONEN} erreicht - keine neuen Trades"
+        _offen_dir = {}
+        for _p in current_positions:
+            try:
+                _offen_dir[_p['market']['epic']] = _p['position']['direction']
+            except Exception:
+                continue
+        _ausstiege = [m for m in matches
+                      if _offen_dir.get(MARKET_CONFIG.get(m[0].upper().strip(), {}).get("epic"), m[1].upper()) != m[1].upper()]
+        if not _ausstiege:
+            return f"⛔ MAX POSITIONEN: {len(current_positions)}/{MAX_POSITIONEN} erreicht - keine neuen Trades"
+        matches = _ausstiege
     
     results = []
 
@@ -9877,7 +9889,7 @@ def gremium_kandidaten(h, positionen):
             offen[p["market"]["epic"]] = p["position"]["direction"]
         except Exception:
             continue
-    voll = len(positionen or []) >= MAX_POSITIONEN
+    voll = len(positionen or []) >= MAX_POSITIONEN   # dann nur noch Ausstiege (Gegenrichtung zu offener Position)
     liste = []
     for k, v in MARKET_CONFIG.items():
         if k in TABU_ASSETS:
@@ -9889,6 +9901,8 @@ def gremium_kandidaten(h, positionen):
         if not pos_dir:
             if voll:
                 continue
+            if is_weekend() and is_crypto(k) and sum(1 for e in offen if is_crypto(e)) >= 3:
+                continue                     # Wochenende: hoechstens 3 Krypto-Positionen (execute_nexus_trade)
             if MAX_JE_GRUPPE > 0:
                 _g, _go = gruppen_belegt(k, epic, positionen)
                 if _g and len(_go) >= MAX_JE_GRUPPE:
@@ -9906,6 +9920,8 @@ def gremium_kandidaten(h, positionen):
         if sinyal not in ("BUY", "SELL") or guc < 2:
             continue
         if pos_dir == sinyal:
+            if voll:
+                continue                     # Aufstocken bei vollem Depot lehnt execute_nexus_trade ab
             try:
                 ok, _neden = pyramiding_kontrol(h, epic, k)
             except Exception:
@@ -9916,6 +9932,30 @@ def gremium_kandidaten(h, positionen):
             _zu = letzte_schliessung(epic, sinyal)
             if _zu > 0 and time.time() - _zu < WIEDEREINSTIEG_SPERRE_STD * 3600:
                 continue
+        # Sperren aus execute_nexus_trade vorab pruefen - sonst verbraucht ein Markt, der ohnehin
+        # abgelehnt wird, einen der Kandidatenplaetze und 12 KI-Aufrufe
+        if not pos_dir:
+            try:
+                if MAX_VERLUSTE_PRO_TAG > 0 and gunluk_kayip_sayisi(k) >= MAX_VERLUSTE_PRO_TAG:
+                    continue
+            except Exception:
+                pass
+            try:
+                if check_hard_block(k, sinyal)[0]:
+                    continue
+            except Exception:
+                pass
+        try:
+            _r = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10)
+            _snap = _r.json().get("snapshot", {}) if _r.status_code == 200 else {}
+            if _snap.get("marketStatus", "TRADEABLE") not in ("TRADEABLE", "OPEN"):
+                continue
+            _b, _o = float(_snap.get("bid", 0) or 0), float(_snap.get("offer", 0) or 0)
+            if MAX_SPREAD is not None and _b and _o and abs(_o - _b) > MAX_SPREAD:
+                continue
+        except Exception as e:
+            logging.debug(f"Gremium-Kandidat {k} Kurs: {e}")
+            continue
         try:
             skor = berechne_signal_score(k, epic)
         except Exception:

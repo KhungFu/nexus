@@ -310,6 +310,9 @@ _OY_MAP = {
 }
 
 
+_WARTEN = {"BEKLE", "WAIT", "HOLD", "HALTEN", "WARTEN", "NEIN", "NO", "NONE", "BEKLEMEK", "PAS", "PASS", "-"}
+
+
 def _json_block(text):
     """Erstes JSON-Objekt aus einer KI-Antwort holen (auch in ```json ... ```)."""
     if not isinstance(text, str) or not text.strip():
@@ -347,11 +350,16 @@ def stimme_lesen(text):
     d = _json_block(text)
     if not d:
         return None
-    roh = str(d.get("oy", d.get("vote", d.get("karar", d.get("stimme", ""))))).strip().upper()
-    oy = _OY_MAP.get(roh, BEKLE)
+    roh = str(d.get("oy", d.get("vote", d.get("stimme", "")))).strip().upper()
+    if roh in _OY_MAP:
+        oy = _OY_MAP[roh]
+    elif roh in _WARTEN:
+        oy = BEKLE
+    else:
+        return None                  # kein gueltiges Feld "oy" -> zaehlt nicht als Antwort
     try:
         guven = int(float(d.get("guven", d.get("confidence", d.get("sicherheit", 50)))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         guven = 50
     return {
         "oy": oy,
@@ -383,8 +391,10 @@ def vorsitz_lesen(text):
 # ---------------------------------------------------------------------------
 # Abstimmung und Auswertung
 # ---------------------------------------------------------------------------
-def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=2):
+def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=1, frist=300):
     """Jedes Mitglied in einem eigenen Aufruf fragen. ask(prompt, system) -> str.
+    frist: Sekunden fuer alle Stimmen zusammen; wer bis dahin nicht geantwortet hat,
+    zaehlt als 'keine Antwort' (ein haengender Anbieter haelt den Scan nicht auf).
     Rueckgabe: Liste in der Reihenfolge der Mitglieder."""
     mitglieder = mitglieder or MITGLIEDER
     prompt = mitglied_prompt(sym, dossier_txt)
@@ -401,8 +411,23 @@ def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=2):
         s.update({"id": m["id"], "name": m["name"], "ok": True, "roh": ""})
         return s
 
-    with ThreadPoolExecutor(max_workers=max(1, int(parallel))) as ex:
-        return list(ex.map(_eins, mitglieder))
+    def _leer(m, roh):
+        return {"id": m["id"], "name": m["name"], "ok": False, "oy": BEKLE, "guven": 0,
+                "gerekce": "", "prinzip": "", "roh": roh}
+
+    ex = ThreadPoolExecutor(max_workers=max(1, int(parallel)))
+    try:
+        futs = [ex.submit(_eins, m) for m in mitglieder]
+        ende = time.time() + max(1, float(frist))
+        out = []
+        for m, f in zip(mitglieder, futs):
+            try:
+                out.append(f.result(timeout=max(0.0, ende - time.time())))
+            except Exception as e:      # Frist abgelaufen oder unerwarteter Fehler
+                out.append(_leer(m, _kurz("⚠️ %s" % (type(e).__name__ if not str(e) else e), 160)))
+        return out
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
 
 def gewichte_normieren(gewichte, ids):
@@ -471,7 +496,20 @@ def vorsitz(sym, richtung, dossier_txt, stimmen, ergebnis, ask, kurs=0.0):
 def trade_zeile(sym, richtung, sl=0.0, tp=0.0):
     """TRADE-Zeile im Format, das execute_nexus_trade liest. SL/TP 0 = Python setzt sie."""
     return "TRADE: %s | SIDE: %s | SIZE: 0 | SL: %s | TP: %s | PYRAMIDING: 0" % (
-        sym, richtung, ("%.6g" % sl) if sl > 0 else "0", ("%.6g" % tp) if tp > 0 else "0")
+        sym, richtung, _preis_text(sl), _preis_text(tp))
+
+
+def _preis_text(x):
+    """Preis ohne e-Notation (execute_nexus_trade liest nur Ziffern und Punkt); 0 = Python setzt ihn."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return "0"
+    if not x > 0 or x != x or x == float("inf"):
+        return "0"
+    stellen = max(2, 8 - len(str(int(x))))          # rund 8 gueltige Stellen, auch fuer 0.000012
+    t = ("%.*f" % (stellen if x >= 1 else 12, x)).rstrip("0").rstrip(".")
+    return t or "0"
 
 
 # ---------------------------------------------------------------------------
