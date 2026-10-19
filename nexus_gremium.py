@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NEXUS Gremium (v16.0) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
+NEXUS Gremium (v16.0.1) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
 
 Ablauf je Kandidat (gesteuert von nexus_ceo.py):
   1. Python baut ein Dossier mit echten Daten (Kurs, Technik, Fundamentaldaten,
@@ -63,9 +63,11 @@ MITGLIEDER = [
             "Vier Regime: Wachstum steigt/fällt × Inflation steigt/fällt. Jedes Asset passt zu bestimmten Regimen.",
             "Der 'Heilige Gral' ist Streuung über viele UNABHÄNGIGE Ertragsquellen. Zwei korrelierte Positionen sind eine Wette.",
             "Risiko ausgleichen (Risk Parity): kein einzelner Markt darf das Depot dominieren.",
+            "Gold gehört in jedes Depot: ein fester Anteil (er nennt etwa 10-15 %) als Schutz gegen Geldentwertung, "
+            "Schuldenkrisen und Währungsrisiken - Gold ist Geld, das keine Zentralbank drucken kann.",
             "Schmerz + Reflexion = Fortschritt: aus Verlusten lernen, keine Rache-Trades.",
         ],
-        "schaut_auf": "Makro-Regime, FRED, offene Positionen und deren Gruppen, Korrelation zum Bestand, Tagesspanne",
+        "schaut_auf": "Makro-Regime, FRED, Dollar, offene Positionen und deren Gruppen, Goldanteil im Depot, Korrelation zum Bestand, Tagesspanne",
         "bekle_wenn": [
             "der Trade dieselbe Wette wie eine offene Position wäre (z. B. noch ein Öl-Short)",
             "das Regime für dieses Asset nicht passt oder unklar ist",
@@ -75,17 +77,19 @@ MITGLIEDER = [
     {
         "id": "kiyosaki",
         "name": "Robert Kiyosaki",
-        "rolle": "Realwerte statt Papiergeld",
+        "rolle": "Realwerte und Cashflow statt Papiergeld",
         "grundsaetze": [
             "Papiergeld ist 'fake money'; Gold, Silber und Bitcoin sind echtes Geld.",
-            "Investoren kaufen Vermögenswerte, die Wert behalten oder Cashflow bringen, und halten sie lange.",
+            "Er besitzt selbst Realwerte mit Cashflow: Immobilien und Öl- und Gasquellen - er kauft lieber Ölquellen "
+            "als Ölaktien. Öl und Erdgas sind für ihn Realwerte, kein Papier.",
+            "Investoren kaufen Vermögenswerte, die Wert behalten oder Cashflow bringen, und halten sie lange. "
             "Rücksetzer bei Realwerten sind Kaufgelegenheiten, keine Gründe zum Verkaufen.",
-            "Kein Trader: handelt selten und nur mit klarem Grund aus Geldpolitik oder Knappheit.",
+            "Kein Trader: handelt selten und nur mit klarem Grund aus Geldpolitik, Inflation, Energiebedarf oder Knappheit.",
         ],
-        "schaut_auf": "Gold, Silber, Krypto, Geldmenge, Dollar, Inflation",
+        "schaut_auf": "Gold, Silber, Krypto, Öl und Gas, Lagerbestände, Geldmenge, Dollar, Inflation",
         "bekle_wenn": [
-            "es um einen SHORT auf Gold, Silber oder Bitcoin geht (das würde er nie tun)",
-            "beim Asset kein Bezug zu Inflation, Geldentwertung oder knappen Realwerten erkennbar ist",
+            "es um einen SHORT auf einen Realwert geht - Gold, Silber, Bitcoin, Öl oder Erdgas (gegen echte Werte wettet er nicht)",
+            "beim Asset kein Bezug zu Inflation, Geldentwertung, Energie oder knappen Realwerten erkennbar ist",
         ],
     },
     {
@@ -96,9 +100,13 @@ MITGLIEDER = [
             "Margin of Safety: nur kaufen, wenn der Preis deutlich unter dem fairen Wert liegt; Mathematik statt Gefühl.",
             "Mr. Market schwankt zwischen Euphorie und Panik - man nutzt ihn, man folgt ihm nicht.",
             "Spekulation ist nicht Investition; ohne nachvollziehbare Bewertung keine Entscheidung.",
-            "Bei Rohstoffen ist der 'Wert' am ehesten der langjährige Durchschnittspreis.",
+            "Rohstoffe kennt er selbst: in 'Storage and Stability' (1937) schlug er eine Währung vor, die durch einen "
+            "Rohstoffkorb gedeckt ist. Den 'Wert' eines Rohstoffs misst er am langjährigen Durchschnittspreis - weit "
+            "darunter ist Sicherheitsmarge, weit darüber ist Mr. Market in Euphorie.",
         ],
-        "schaut_auf": "Abstand zum 200-Tage-Schnitt und zur Jahresspanne, Übertreibung (RSI, Bollinger), Fundamentaldaten",
+        "schaut_auf": "Abstand zum 200-Tage-Schnitt (EMA200) und Lage in der Spanne der letzten rund 210 Tage "
+                      "(mehr Historie hat das Dossier nicht - nimm sie als beste Näherung für das langjährige Mittel), "
+                      "Übertreibung (RSI), Fundamentaldaten",
         "bekle_wenn": [
             "der Kurs nicht klar von seinem langfristigen Mittel entfernt ist (keine Sicherheitsmarge)",
             "die Entscheidung nur auf Momentum oder Nachrichten beruht",
@@ -112,7 +120,10 @@ MITGLIEDER = [
             "Regel 1: kein Geld verlieren. Regel 2: Regel 1 nicht vergessen.",
             "Nur handeln, was man versteht (Kompetenzkreis).",
             "Geduld: das Geld fließt von den Ungeduldigen zu den Geduldigen. Wenige, sehr gute Gelegenheiten.",
-            "Skeptisch gegenüber Anlagen ohne eigenen Ertrag (Gold, Krypto) und gegenüber Spekulation ohne klaren Vorteil.",
+            "Skeptisch gegenüber Anlagen ohne eigenen Ertrag (Gold, Krypto) und gegenüber reiner Preiswette ohne klaren Vorteil.",
+            "Energie ist für ihn kein Tabu: Berkshire hält große Beteiligungen an Ölförderern (Occidental, Chevron) - "
+            "wegen ihres Cashflows und günstigen Preises. Ein Rohstoff-Trade braucht deshalb einen klaren, "
+            "verständlichen Grund aus Angebot und Nachfrage, kein Bauchgefühl.",
         ],
         "schaut_auf": "Verständlichkeit des Trades, Kosten (Spread), Verlustrisiko, Qualität der Begründung",
         "bekle_wenn": [
@@ -127,9 +138,11 @@ MITGLIEDER = [
         "rolle": "Qualität, Kosten, Streuung",
         "grundsaetze": [
             "Qualität vor Menge; niedrige Kosten (Spread) sind ein Vorteil.",
-            "Breit streuen wie eine Fußballmannschaft: Abwehr (Gold), Mittelfeld (Rohstoffe), Sturm (Krypto).",
-            "Geduld; Qualität bei Schwäche kaufen.",
-            "'Beleş At': nach +100 % den Einsatz herausnehmen, der Rest läuft frei.",
+            "Geduld; Qualität bei Schwäche kaufen. Sie schrieb vor allem über Aktien - übertragen heißt Qualität hier: "
+            "liquide Märkte mit engem Spread und klarer Nachfrage.",
+            "Breit streuen wie eine Fußballmannschaft: Abwehr (Gold), Mittelfeld (Rohstoffe), Sturm (Krypto) "
+            "(Bild aus der Mentor-Datei des Nutzers).",
+            "'Beleş At': nach +100 % den Einsatz herausnehmen, der Rest läuft frei (Regel aus der Mentor-Datei des Nutzers).",
         ],
         "schaut_auf": "Spread im Verhältnis zum Kurs, Verteilung des Depots auf Gruppen, Liquidität",
         "bekle_wenn": [
@@ -145,12 +158,15 @@ MITGLIEDER = [
             "Kurs = Geld + Psychologie. Liquidität und Zinsen treiben den großen Trend.",
             "Kostolany-Ei: Korrektur, Begleitphase, Übertreibung. In der Übertreibung kaufen die 'zittrigen Hände' - dann verkauft der Kluge.",
             "Antizyklisch: kaufen, wenn die Stimmung schlecht ist; vorsichtig, wenn alle euphorisch sind.",
-            "Geduld: 'Aspirin nehmen und schlafen'. Nachts und in Hektik nicht handeln.",
+            "Geduld: kaufen, Schlaftabletten nehmen und lange nicht hinschauen. Wer hektisch rein und raus springt, "
+            "zahlt drauf - an der Börse verdient man mit dem Gesäß, nicht mit dem Kopf.",
+            "Die vier G des Spekulanten: Geld, Gedanken, Geduld und Glück. Nur die 'Hartgesottenen' mit eigenem Geld "
+            "und Geduld gewinnen, die 'Zittrigen' verkaufen im falschen Moment.",
         ],
-        "schaut_auf": "Fear & Greed, Nachrichtenstimmung, Übertreibung (RSI, Abstand zum Schnitt), Uhrzeit",
+        "schaut_auf": "Fear & Greed, Nachrichtenstimmung, Übertreibung (RSI, Abstand zum Schnitt), Zinsen und Liquidität",
         "bekle_wenn": [
             "der Trade der Masse in eine Übertreibung hinterherläuft",
-            "es Nacht ist oder der Markt hektisch ist",
+            "der Markt hektisch ist (ungewöhnlich große Tagesspanne, Schlagzeilen-Flut) - in Hektik handelt er nicht",
         ],
     },
     {
@@ -207,14 +223,14 @@ MITGLIEDER = [
         "name": "Stanley Druckenmiller",
         "rolle": "Liquidität, Makro + Kursverlauf",
         "grundsaetze": [
-            "Liquidität und Zentralbanken bewegen die Märkte; schau 12-18 Monate nach vorn, nicht auf heute.",
+            "Liquidität und Zentralbanken bewegen die Märkte; schau 18-24 Monate nach vorn, nicht auf heute.",
             "Makro-These und Kursverlauf müssen übereinstimmen - der Kurs bestätigt die These.",
             "Bei hoher Überzeugung konzentriert handeln, bei Irrtum sofort raus.",
             "Gegen den Kursverlauf zu wetten ist teuer.",
         ],
         "schaut_auf": "Tagestrend und 4h-Trend, Makro-Regime, Zinsen und Dollar",
         "bekle_wenn": [
-            "Tages- und 4h-Trend nicht in dieselbe Richtung zeigen",
+            "Tages- und 4h-Trend nicht in dieselbe Richtung zeigen (bei Krypto gibt es keinen 4h-Wert - dann zählt der Tagestrend)",
             "die Makro-These dem Kursverlauf widerspricht",
         ],
     },
@@ -241,7 +257,25 @@ _ANTWORT = (
 )
 
 
-def mitglied_system(m):
+# Antwortsprache fuer die Freitext-Felder. Steht in der Zielsprache UND am Ende jedes
+# Aufrufs, damit die deutsche Rollenkarte die Sprache nicht ueberstimmt (v16.0.1).
+_SPRACHE = {
+    "de": "SPRACHE: Schreibe 'gerekce' und 'prinzip' auf Deutsch.",
+    "en": "LANGUAGE: Write 'gerekce' and 'prinzip' in English (not German).",
+    "tr": "DİL: 'gerekce' ve 'prinzip' alanlarını Türkçe yaz (Almanca değil).",
+}
+_SPRACHE_VORSITZ = {
+    "de": "SPRACHE: Schreibe 'gerekce' auf Deutsch.",
+    "en": "LANGUAGE: Write 'gerekce' in English (not German).",
+    "tr": "DİL: 'gerekce' alanını Türkçe yaz (Almanca değil).",
+}
+
+
+def _sprache(lang, tabelle=None):
+    return (tabelle or _SPRACHE).get(lang or "", "")
+
+
+def mitglied_system(m, lang=None):
     """System-Anweisung fuer ein Mitglied (seine Rollenkarte)."""
     z = [
         "Du bist %s im Anlage-Gremium von NEXUS (%s)." % (m["name"], m["rolle"]),
@@ -261,11 +295,14 @@ def mitglied_system(m):
         "",
         _ANTWORT,
     ]
+    if _sprache(lang):
+        z.append(_sprache(lang) + " Die Werte von 'oy' bleiben BUY, SELL oder BEKLE.")
     return "\n".join(z)
 
 
-def mitglied_prompt(sym, dossier_txt):
-    return "Kandidat: %s\n\n%s\n\nDeine Stimme als JSON:" % (sym, dossier_txt)
+def mitglied_prompt(sym, dossier_txt, lang=None):
+    t = "Kandidat: %s\n\n%s\n\nDeine Stimme als JSON:" % (sym, dossier_txt)
+    return t + ("\n" + _sprache(lang) if _sprache(lang) else "")
 
 
 _VORSITZ_SYSTEM = (
@@ -285,7 +322,11 @@ _VORSITZ_SYSTEM = (
 )
 
 
-def vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis):
+def vorsitz_system(lang=None):
+    return _VORSITZ_SYSTEM + ("\n" + _sprache(lang, _SPRACHE_VORSITZ) if _sprache(lang, _SPRACHE_VORSITZ) else "")
+
+
+def vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis, lang=None):
     z = ["Kandidat: %s | Beschluss der Mehrheit: %s" % (sym, richtung),
          "Gewichtete Stimmen: BUY %.1f | SELL %.1f | BEKLE %.1f (Mehrheit ab %.1f)" % (
              ergebnis["gewicht"][BUY], ergebnis["gewicht"][SELL], ergebnis["gewicht"][BEKLE],
@@ -298,6 +339,8 @@ def vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis):
         else:
             z.append("- %s: keine Antwort" % s["name"])
     z += ["", dossier_txt, "", "Deine Entscheidung als JSON:"]
+    if _sprache(lang, _SPRACHE_VORSITZ):
+        z.append(_sprache(lang, _SPRACHE_VORSITZ))
     return "\n".join(z)
 
 
@@ -391,17 +434,17 @@ def vorsitz_lesen(text):
 # ---------------------------------------------------------------------------
 # Abstimmung und Auswertung
 # ---------------------------------------------------------------------------
-def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=1, frist=300):
+def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=1, frist=300, lang=None):
     """Jedes Mitglied in einem eigenen Aufruf fragen. ask(prompt, system) -> str.
     frist: Sekunden fuer alle Stimmen zusammen; wer bis dahin nicht geantwortet hat,
     zaehlt als 'keine Antwort' (ein haengender Anbieter haelt den Scan nicht auf).
     Rueckgabe: Liste in der Reihenfolge der Mitglieder."""
     mitglieder = mitglieder or MITGLIEDER
-    prompt = mitglied_prompt(sym, dossier_txt)
+    prompt = mitglied_prompt(sym, dossier_txt, lang)
 
     def _eins(m):
         try:
-            roh = ask(prompt, mitglied_system(m))
+            roh = ask(prompt, mitglied_system(m, lang))
         except Exception as e:  # ask soll nie werfen, aber sicher ist sicher
             roh = "⚠️ %s" % e
         s = stimme_lesen(roh)
@@ -472,11 +515,11 @@ def auswerten(stimmen, gewichte=None, mehrheit=6.0, min_antworten=8, konflikt=3)
     return erg
 
 
-def vorsitz(sym, richtung, dossier_txt, stimmen, ergebnis, ask, kurs=0.0):
+def vorsitz(sym, richtung, dossier_txt, stimmen, ergebnis, ask, kurs=0.0, lang=None):
     """Vorsitz fragen. Rueckgabe {ok, karar, sl, tp, gerekce}. SL/TP auf der falschen
     Seite des Kurses werden verworfen (0 = Python setzt sie aus der Tagesspanne)."""
     try:
-        roh = ask(vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis), _VORSITZ_SYSTEM)
+        roh = ask(vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis, lang), vorsitz_system(lang))
     except Exception as e:
         roh = "⚠️ %s" % e
     v = vorsitz_lesen(roh)
@@ -497,6 +540,20 @@ def trade_zeile(sym, richtung, sl=0.0, tp=0.0):
     """TRADE-Zeile im Format, das execute_nexus_trade liest. SL/TP 0 = Python setzt sie."""
     return "TRADE: %s | SIDE: %s | SIZE: 0 | SL: %s | TP: %s | PYRAMIDING: 0" % (
         sym, richtung, _preis_text(sl), _preis_text(tp))
+
+
+def _kurs_text(x):
+    """Kurs fuer Menschen: rund 6 gueltige Stellen (3.2904999999999998 -> 3.2905)."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return "?"
+    if not x > 0 or x != x or x == float("inf"):
+        return "?"
+    t = "%.6g" % x
+    if "e" in t:
+        t = ("%.12f" % x).rstrip("0").rstrip(".")
+    return t
 
 
 def _preis_text(x):
@@ -665,7 +722,7 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
     T = _t(lang)
     z = [T["titel"].format(sym=sym)]
     if kurs or tech:
-        z.append(T["kurs"].format(kurs=kurs or "?", tech=tech or "-"))
+        z.append(T["kurs"].format(kurs=_kurs_text(kurs), tech=tech or "-"))
     z.append("")
     for s in stimmen:
         if s["ok"]:
@@ -717,7 +774,7 @@ def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
 # Rollenkarten als Dokument
 # ---------------------------------------------------------------------------
 def doku():
-    z = ["# NEXUS Gremium – Rollenkarten (v16.0)", "",
+    z = ["# NEXUS Gremium – Rollenkarten (v16.0.1)", "",
          "Diese Datei wird aus `nexus_gremium.py` erzeugt (`python3 nexus_gremium.py --doku > docs/GREMIUM.md`). "
          "Genau dieser Text geht als Anweisung an die KI. Wer eine Karte ändern will, ändert `MITGLIEDER` in "
          "`nexus_gremium.py` und erzeugt die Datei neu.", "",

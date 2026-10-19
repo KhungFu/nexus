@@ -421,6 +421,85 @@ def get_eia_petroleum():
 
 
 # ============================================================
+# EIA WEEKLY NATURAL GAS STORAGE (v16.0.1)
+# Jeden Donnerstag 10:30 ET. Lower 48, Arbeitsgas in Mrd. Kubikfuss (Bcf).
+# Vergleich mit derselben Kalenderwoche der letzten 5 Jahre (wie im EIA-Bericht).
+# ============================================================
+_eia_gas_cache = {}
+
+
+def _eia_gas_auswerten(records):
+    """records: [{'period': 'YYYY-MM-DD', 'value': ...}, ...] neueste zuerst -> Ergebnis-dict."""
+    werte = []
+    for r in records:
+        try:
+            werte.append((datetime.strptime(str(r.get("period"))[:10], "%Y-%m-%d"), float(r.get("value"))))
+        except (TypeError, ValueError):
+            continue
+    if len(werte) < 2:
+        raise ValueError("zu wenige Daten")
+    werte.sort(key=lambda x: x[0], reverse=True)
+    (d0, v0), (_d1, v1) = werte[0], werte[1]
+    vor_jahren = []
+    for j in range(1, 6):
+        ziel = d0 - timedelta(days=round(365.25 * j))
+        nah = min(werte, key=lambda x: abs((x[0] - ziel).days))
+        if abs((nah[0] - ziel).days) <= 4:
+            vor_jahren.append(nah[1])
+    schnitt5 = sum(vor_jahren) / len(vor_jahren) if vor_jahren else 0.0
+    abw = (v0 - schnitt5) / schnitt5 * 100 if schnitt5 else 0.0
+    if not vor_jahren:
+        signal, sent = "UNKNOWN", 0.0
+    elif abw > 10:
+        signal, sent = "BEARISH", -0.6
+    elif abw < -10:
+        signal, sent = "BULLISH", 0.6
+    elif abw > 4:
+        signal, sent = "SLIGHT_BEARISH", -0.3
+    elif abw < -4:
+        signal, sent = "SLIGHT_BULLISH", 0.3
+    else:
+        signal, sent = "NEUTRAL", 0.0
+    vgl = (f" | {len(vor_jahren)}-Jahres-Schnitt dieser Woche {schnitt5:.0f} Bcf, Abweichung {abw:+.1f}%"
+           if vor_jahren else " | kein 5-Jahres-Vergleich")
+    return {
+        "latest_bcf": round(v0, 0), "weekly_change": round(v0 - v1, 0), "avg_5yr_bcf": round(schnitt5, 0),
+        "deviation_pct": round(abw, 1), "signal": signal, "sentiment": sent,
+        "period": d0.strftime("%Y-%m-%d"),
+        "summary": (f"EIA Erdgasspeicher {d0:%d.%m.%Y}: {v0:.0f} Bcf | Woche {v0 - v1:+.0f} Bcf"
+                    f" ({'Einspeicherung' if v0 >= v1 else 'Entnahme'}){vgl} → {signal}"),
+    }
+
+
+def get_eia_natgas_storage():
+    """EIA Weekly Natural Gas Storage Report (Lower 48). Relevant fuer NATURALGAS."""
+    global _eia_gas_cache
+    now = datetime.now()
+    if _eia_gas_cache.get("ts") and (now - _eia_gas_cache["ts"]).total_seconds() < 3600 * 6:
+        return _eia_gas_cache["data"]
+    try:
+        url = (
+            "https://api.eia.gov/v2/natural-gas/stor/wkly/data/"
+            "?api_key=" + (EIA_API_KEY or "DEMO_KEY") +
+            "&frequency=weekly"
+            "&data[0]=value"
+            "&facets[series][]=NW2_EPG0_SWO_R48_BCF"   # Working gas, Lower 48
+            "&sort[0][column]=period&sort[0][direction]=desc"
+            "&offset=0&length=300"
+        )
+        r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            raise ValueError(f"HTTP {r.status_code}")
+        result = _eia_gas_auswerten(r.json().get("response", {}).get("data", []))
+        _eia_gas_cache = {"ts": now, "data": result}
+        logging.info(f"EIA Erdgas: {result['summary']}")
+        return result
+    except Exception as e:
+        logging.warning(f"EIA Erdgas: {e}")
+        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"EIA Erdgas k. A. ({str(e)[:60]})"}
+
+
+# ============================================================
 # CFTC COT REPORT - Commitment of Traders (v14.8)
 # Kein API Key nötig - öffentliches CSV
 # Jeden Freitag 15:30 ET
@@ -836,7 +915,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.0"                                    # steht in der Startmeldung
+NEXUS_VERSION        = "v16.0.1"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -9724,6 +9803,7 @@ def _gremium_makro():
     _q("fred", get_fred_macro_signal)
     _q("cal", get_economic_calendar)
     _q("eia", get_eia_petroleum)
+    _q("eia_gas", get_eia_natgas_storage)
     _q("cot_gold", lambda: get_cot_positioning("GOLD"))
     _q("cot_oil", lambda: get_cot_positioning("OIL"))
     _q("cot_silver", lambda: get_cot_positioning("SILVER"))
@@ -9816,8 +9896,11 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
     su = sym.upper()
     fund = []
     if grp == "ENERGIE":
-        fund.append("EIA Öl-Lager: " + _g_sum(makro.get("eia")))
-        fund.append("COT Öl: " + _g_sum(makro.get("cot_oil")))
+        if "GAS" in su and "GASOLINE" not in su:
+            fund.append("EIA Erdgas-Speicher: " + _g_sum(makro.get("eia_gas")))
+        else:
+            fund.append("EIA Öl-Lager: " + _g_sum(makro.get("eia")))
+            fund.append("COT Öl: " + _g_sum(makro.get("cot_oil")))
         fund.append("Wetter Energie: " + _g_sum(makro.get("wx_energy"), "notes"))
     if "GOLD" in su:
         fund.append("COT Gold: " + _g_sum(makro.get("cot_gold")))
@@ -10088,13 +10171,15 @@ def gremium_zyklus():
                 logging.info(f"GREMIUM {sym}: Spread {info['spread']} > MAX_SPREAD {MAX_SPREAD} - nicht beraten")
                 continue
             t0 = time.time()
-            stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST)
+            stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST,
+                                   lang=lang)
             mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
             erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN)
             vs = None
             karar, grund = "BEKLE", erg.get("grund", "")
             if erg["richtung"]:
-                vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_vorsitz_ask, kurs=info["kurs"])
+                vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_vorsitz_ask, kurs=info["kurs"],
+                                lang=lang)
                 vs["wer"] = _gremium_vorsitz_name()
                 if vs.get("ok") and vs["karar"] == "UYGULA":
                     karar, grund = "UYGULA", ""
