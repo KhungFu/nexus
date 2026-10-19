@@ -915,7 +915,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.0.1"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.0.2"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -953,6 +953,10 @@ CLAUDE_CLI             = (os.getenv("CLAUDE_CLI", "claude").split("#")[0].strip(
 CLAUDE_MODELL_ENV      = (os.getenv("CLAUDE_MODELL", "sonnet").split("#")[0].strip() or "sonnet")
 CLAUDE_MODELL          = "sonnet" if "haiku" in CLAUDE_MODELL_ENV.lower() else CLAUDE_MODELL_ENV  # mindestens Sonnet
 CLAUDE_TIMEOUT         = _env_zahl("CLAUDE_TIMEOUT", 180, int)
+# v16.0.2: Kontrolle wie in swarm.py (AIBudgetTracker) + Pause fuer Anbieter, die gerade nicht antworten
+KI_BUDGET_STUNDE       = _env_zahl("KI_BUDGET_STUNDE", 120, int)   # KI-Aufrufe je Stunde hoechstens (0 = ohne Grenze)
+KI_PAUSE_MIN           = _env_zahl("KI_PAUSE_MIN", 15)             # Anbieter nach 2 Fehlschlaegen in Folge so viele Minuten auslassen (0 = aus)
+GREMIUM_PROVIDER       = [p.strip().lower() for p in os.getenv("GREMIUM_PROVIDER", "").split("#")[0].split(",") if p.strip()]  # eigene Reihenfolge fuers Gremium (leer = PROVIDER_ORDER)
 WIEDEREINSTIEG_SPERRE_STD = float(os.getenv("WIEDEREINSTIEG_SPERRE_STD", "6"))  # v15.18: so viele Stunden nach einer Schliessung kein neuer Einstieg in dasselbe Symbol/dieselbe Richtung (0 = aus)
 SCAN_MELDUNGEN       = os.getenv("SCAN_MELDUNGEN", "neu").strip().lower()  # v15.18: "neu" = Scan ohne Trade nur melden, wenn sich etwas aendert; "alle" = wie vorher
 
@@ -2863,9 +2867,94 @@ def _ai_modelupdate_loop():
 
 
 # ============================================================
+# v16.0.2: KI-BUDGET (wie AIBudgetTracker in swarm.py) + ANBIETER-PAUSE
+# ============================================================
+class KIBudget:
+    """Zaehlt KI-Aufrufe der letzten Stunde. Ist die Grenze erreicht, gehen keine Aufrufe
+    mehr an die Cloud-Anbieter - so verbrennt der Bot das Gratis-Kontingent nicht mit
+    Anfragen, die ohnehin abgelehnt wuerden. max_pro_stunde <= 0: keine Grenze."""
+    def __init__(self, max_pro_stunde=120):
+        self.max = int(max_pro_stunde)
+        self.calls = []
+        self.lock = threading.Lock()
+
+    def _aufraeumen(self, now):
+        self.calls = [t for t in self.calls if now - t < 3600]
+
+    def check_and_record(self):
+        if self.max <= 0:
+            return True
+        with self.lock:
+            now = time.time()
+            self._aufraeumen(now)
+            if len(self.calls) >= self.max:
+                return False
+            self.calls.append(now)
+            return True
+
+    def benutzt(self):
+        with self.lock:
+            self._aufraeumen(time.time())
+            return len(self.calls)
+
+    def frei(self):
+        return 10 ** 9 if self.max <= 0 else max(0, self.max - self.benutzt())
+
+
+ki_budget = KIBudget(KI_BUDGET_STUNDE)
+
+_KI_FEHLER = {}          # anbieter -> Fehlschlaege in Folge
+_KI_PAUSE_BIS = {}       # anbieter -> Zeitpunkt, bis zu dem er ausgelassen wird
+_ki_pause_lock = threading.Lock()
+
+
+def _ki_pausiert(prov):
+    with _ki_pause_lock:
+        return _KI_PAUSE_BIS.get(prov, 0) > time.time()
+
+
+def _ki_ergebnis(prov, ok):
+    """Nach jedem Versuch: Erfolg setzt zurueck; 2 Fehlschlaege in Folge -> Pause."""
+    if KI_PAUSE_MIN <= 0:
+        return
+    with _ki_pause_lock:
+        if ok:
+            _KI_FEHLER[prov] = 0
+            _KI_PAUSE_BIS.pop(prov, None)
+            return
+        _KI_FEHLER[prov] = _KI_FEHLER.get(prov, 0) + 1
+        if _KI_FEHLER[prov] >= 2:
+            _KI_PAUSE_BIS[prov] = time.time() + KI_PAUSE_MIN * 60
+            _KI_FEHLER[prov] = 0
+            logging.warning(f"[KI] {prov}: 2 Fehlschlaege in Folge - {KI_PAUSE_MIN:g} Min. ausgelassen")
+
+
+def ki_status_zeile():
+    with _ki_pause_lock:
+        pausen = {p: t for p, t in _KI_PAUSE_BIS.items() if t > time.time()}
+    z = f"KI-Budget: {ki_budget.benutzt()}/{ki_budget.max if ki_budget.max > 0 else '∞'} Aufrufe in der letzten Stunde"
+    if pausen:
+        z += " | ausgelassen: " + ", ".join(f"{p} bis {datetime.fromtimestamp(t).strftime('%H:%M')}" for p, t in pausen.items())
+    return z
+
+
+_KONTEXT_TXT = ("reduce the length", "too large", "context length", "context_length", "maximum context",
+                "too long", "413", "request_too_large", "tokens per minute")
+
+
+def _ki_kuerzen(text, n=6000):
+    """Langen Text kuerzen: Anfang und Ende bleiben (dort stehen Kurs und Depot)."""
+    if not text or len(text) <= n:
+        return text
+    kopf = int(n * 0.65)
+    return text[:kopf] + "\n[... gekürzt ...]\n" + text[-(n - kopf):]
+
+
+# ============================================================
 # UNIVERSELLER AI-CALLER — alle Provider nach PROVIDER_ORDER
 # ============================================================
-def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
+def call_ai(prompt: str, system: str = "", use_grounding: bool = False,
+            reihenfolge=None, ohne_ollama: bool = False) -> str:
     """
     Ruft KI-Provider in der Reihenfolge aus PROVIDER_ORDER auf.
     Ollama-Priorität (OLLAMA_PRIORITY) wird berücksichtigt:
@@ -2878,8 +2967,18 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
     Qwen/Nvidia: OpenAI-kompatibler Endpunkt.
 
     Gibt immer einen String zurück (nie Exception nach außen).
+    v16.0.2: reihenfolge = eigene Anbieter-Liste (Gremium); ohne_ollama = Ollama nie fragen;
+    KI-Budget je Stunde (KI_BUDGET_STUNDE) und Pause fuer Anbieter, die zweimal in Folge scheitern.
     """
     system = lang_ai(system)  # v15.19
+    if not ki_budget.check_and_record():
+        logging.warning(f"[KI] Budget erreicht ({ki_budget.max}/h) - keine Cloud-Anfrage")
+        if not ohne_ollama and OLLAMA_PRIORITY in ("first", "last", "only"):
+            ollama_nur = True
+        else:
+            return f"⚠️ KI-Budget erreicht ({ki_budget.max} Aufrufe/Stunde)."
+    else:
+        ollama_nur = False
     import openai as _openai  # Für Qwen + Nvidia (OpenAI-kompatibel)
 
     def _try_ollama():
@@ -2917,8 +3016,17 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
     def _try_groq():
         def _einmal(key, model):
             import groq as _groq
-            resp = _groq.Groq(api_key=key).chat.completions.create(
-                model=model, messages=_msgs(), max_tokens=4096)
+            client = _groq.Groq(api_key=key)
+            try:
+                resp = client.chat.completions.create(model=model, messages=_msgs(), max_tokens=4096)
+            except Exception as e:
+                # v16.0.2 wie swarm.py: Text zu lang fuer das Modell -> gekuerzt einmal nochmal
+                if not any(x in str(e).lower() for x in _KONTEXT_TXT) or len(prompt) <= 6000:
+                    raise
+                logging.warning(f"Groq {model}: Text zu lang - gekürzt nochmal ({len(prompt)} -> 6000 Zeichen)")
+                kurz = ([{"role": "system", "content": system}] if system else []) + \
+                       [{"role": "user", "content": _ki_kuerzen(prompt)}]
+                resp = client.chat.completions.create(model=model, messages=kurz, max_tokens=2048)
             return resp.choices[0].message.content
         return ai_chain_call("groq", _einmal)
 
@@ -2943,24 +3051,28 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False) -> str:
         "nvidia": _try_nvidia,
     }
 
+    if ollama_nur:
+        return _try_ollama() or f"⚠️ KI-Budget erreicht ({ki_budget.max} Aufrufe/Stunde), Ollama antwortet nicht."
+
     # Ollama first
-    if OLLAMA_PRIORITY == "only":
+    if OLLAMA_PRIORITY == "only" and not ohne_ollama:
         return _try_ollama() or "⚠️ Ollama yanıt vermedi."
-    if OLLAMA_PRIORITY == "first":
+    if OLLAMA_PRIORITY == "first" and not ohne_ollama:
         result = _try_ollama()
         if result:
             return result
 
-    # Provider-Reihenfolge aus .env
-    for provider in PROVIDER_ORDER:
-        fn = PROVIDER_FN.get(provider.lower())
-        if fn:
-            result = fn()
-            if result:
-                return result
+    # Provider-Reihenfolge aus .env (v16.0.2: pausierte Anbieter zuletzt statt gar nicht)
+    liste = [p.lower() for p in (reihenfolge or PROVIDER_ORDER) if p.lower() in PROVIDER_FN]
+    aktiv = [p for p in liste if not _ki_pausiert(p)]
+    for provider in aktiv or liste:
+        result = PROVIDER_FN[provider]()
+        _ki_ergebnis(provider, bool(result))
+        if result:
+            return result
 
     # Ollama last
-    if OLLAMA_PRIORITY == "last":
+    if OLLAMA_PRIORITY == "last" and not ohne_ollama:
         result = _try_ollama()
         if result:
             return result
@@ -9928,7 +10040,7 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
     # Nachrichten zum Asset
     try:
         news = get_news_summary_for_asset(_G_NEWS_TAG.get(sym, sym if sym in ASSET_KEYWORDS else "GENEL"), days=7)
-        z.append("NACHRICHTEN (Datenbank, 7 Tage):\n" + str(news)[:1400])
+        z.append("NACHRICHTEN (Datenbank, 7 Tage):\n" + str(news)[:900])
     except Exception:
         z.append("NACHRICHTEN: k. A.")
 
@@ -10051,7 +10163,10 @@ def gremium_kandidaten(h, positionen):
 
 
 def _gremium_ask(prompt, system):
-    return call_ai(prompt, system=system, use_grounding=False)
+    # v16.0.2: nie Ollama (kleines lokales Modell gibt Platzhalter statt Begruendungen),
+    # eigene Reihenfolge aus GREMIUM_PROVIDER, sonst PROVIDER_ORDER
+    return call_ai(prompt, system=system, use_grounding=False,
+                   reihenfolge=GREMIUM_PROVIDER or None, ohne_ollama=True)
 
 
 # Umgebung fuer claude -p: nur was die CLI braucht - keine Schluessel aus der .env (TG_TOKEN, CAPITAL_*, ...)
@@ -10170,9 +10285,16 @@ def gremium_zyklus():
             if MAX_SPREAD is not None and info["spread"] > MAX_SPREAD:
                 logging.info(f"GREMIUM {sym}: Spread {info['spread']} > MAX_SPREAD {MAX_SPREAD} - nicht beraten")
                 continue
+            # v16.0.2: reicht das KI-Budget fuer alle Stimmen? Sonst gar nicht erst anfangen.
+            need = len(_NG.MITGLIEDER) + (0 if GREMIUM_VORSITZ == "claude" else 1)
+            if ki_budget.frei() < need:
+                logging.info(f"GREMIUM {sym}: KI-Budget {ki_budget.benutzt()}/{ki_budget.max} - nicht beraten")
+                _gremium_senden(_NG.budget_zeile(sym, ki_budget.benutzt(), ki_budget.max, need, lang))
+                kurz.append(f"{sym}: Budget")
+                break
             t0 = time.time()
             stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST,
-                                   lang=lang)
+                                   lang=lang, min_antworten=GREMIUM_MIN_ANTWORTEN)
             mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
             erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN)
             vs = None
@@ -10235,7 +10357,8 @@ def handle_gremium(message):
         _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {'alter Modus (GREMIUM_MODUS=regeln)' if _NG else 'nexus_gremium.py fehlt'}")
         return
     try:
-        _gremium_senden(_NG.gewichte_bericht(_GD, lang=_gremium_lang(), std=GREMIUM_BEWERTUNG_STD))
+        _gremium_senden(_NG.gewichte_bericht(_GD, lang=_gremium_lang(), std=GREMIUM_BEWERTUNG_STD)
+                        + "\n\n" + ki_status_zeile())
     except Exception as e:
         _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {str(e)[:200]}")
 
@@ -10280,7 +10403,7 @@ def handle_language_callback(call):
 def handle_status(message):
     sync_bericht = sync_pyramiding_from_capital()
     bot.send_message(MY_CHAT_ID, f"Piramiding Senkron: {sync_bericht}")
-    bot.send_message(MY_CHAT_ID, f"🔍 {datetime.now().strftime('%d.%m %H:%M')} | NEXUS NATURE v12.0 - Analiz yapılıyor...")
+    bot.send_message(MY_CHAT_ID, f"🔍 {datetime.now().strftime('%d.%m %H:%M')} | NEXUS NATURE {NEXUS_VERSION} - Analiz yapılıyor...")
     analysis = fetch_strategic_response("STATUS_REQUEST")
     bot.send_message(MY_CHAT_ID, analysis[:4000])
 
@@ -11951,7 +12074,7 @@ def main_loop():
 
             if not h:
                 logging.error("API bağlantısı yok, 60s bekleniyor")
-                try: bot.send_message(MY_CHAT_ID, f"⚠️ NEXUS NATURE v12.0: API bağlantı hatası! Yeniden deneniyor... (Döngü #{dongu_sayaci})")
+                try: bot.send_message(MY_CHAT_ID, f"⚠️ NEXUS NATURE {NEXUS_VERSION}: API bağlantı hatası! Yeniden deneniyor... (Döngü #{dongu_sayaci})")
                 except: pass
                 time.sleep(60)
                 continue
@@ -12068,7 +12191,7 @@ def main_loop():
             if "TRADE:" not in analysis:
                 # v12.1: Heartbeat sadece her 3 döngüde bir (90 dk) → Telegram quota tasarrufu
                 if dongu_sayaci % 6 == 0:  # v14.0: alle 3h statt 90min
-                    status_msg = f"🟢 {datetime.now().strftime('%d.%m %H:%M')} | NEXUS NATURE v12.0 Tarama #{dongu_sayaci} tamamlandı.\nBu döngüde trade sinyali yok.\nPiyasa izlenmeye devam ediyor."
+                    status_msg = f"🟢 {datetime.now().strftime('%d.%m %H:%M')} | NEXUS NATURE {NEXUS_VERSION} Tarama #{dongu_sayaci} tamamlandı.\nBu döngüde trade sinyali yok.\nPiyasa izlenmeye devam ediyor."
                     try: bot.send_message(MY_CHAT_ID, status_msg)
                     except: pass
             elif SCAN_MELDUNGEN == "alle":  # v15.18: sonst schickt scan_meldungen() sie - nur wenn gehandelt wurde
@@ -12190,7 +12313,7 @@ if __name__ == "__main__":
         _trading_assets_info = f"  ℹ️  TRADING_ASSETS nicht in .env → alle aus capital_markets_config.py: {', '.join(MARKET_CONFIG.keys())}"
     
     baslanis_mesaji = f"""🕐 {_ts} | NEXUS NATURE {NEXUS_VERSION} - BRIDGEWATER EDITION Baslatildi
-Mod: Rogers Filter + Gremium 5 + MA/ADX/RSI/BB/FIB/EMA200
+Mod: Rogers Filter + Gremium + MA/ADX/RSI/BB/FIB/EMA200
 Interval: {SCAN_INTERVAL_SEC / 3600:g}h (Macro-Scan) | Max Positionen: {MAX_POSITIONEN}
 Kara Kuğu Koruması (3 Seviye):
   -%8  Gemini Acil Karar
@@ -12204,7 +12327,7 @@ Haber Geçmişi: 14 Gün
 Pyramiding: Sinir yok (min %2 kar per seviye) | EXIT: Gemini veya Trailing SL %5
 Stop Loss: min. {SL_ATR_MULT:g} × Tagesspanne (Tages-ATR), max. {SL_MAX_PCT:g}% | /sl_weiten
 Wiedereinstieg: frühestens {WIEDEREINSTIEG_SPERRE_STD:g} h nach einer Schließung | Scan-Meldungen: {SCAN_MELDUNGEN}
-Gremium: Cihat/Rogers/Dalio/Taleb/Soros ({os.getenv('GREMIUM_MIN_JA', '4')}/5 JA gerekli, Krypto {os.getenv('GREMIUM_MIN_JA_KRYPTO', '3')}/5)
+Gremium alt (nur GREMIUM_MODUS=regeln): {os.getenv('GREMIUM_MIN_JA', '4')}/5 JA, Krypto {os.getenv('GREMIUM_MIN_JA_KRYPTO', '3')}/5
 Spread Filter: Max {MAX_SPREAD} | Auto-Config: AKTİF
 Haftasonu: ALLE Assets AKTIF (Krypto gleich wie andere behandelt)
 Aşama 1 Filtre (Bollinger+Fib): AKTİF
@@ -12242,10 +12365,16 @@ Komutlar: /help
                 konfig_uyarilar.append(f"⚠️ CLAUDE_MODELL={CLAUDE_MODELL_ENV} ist kleiner als Sonnet - nutze {CLAUDE_MODELL}")
         else:
             konfig_uyarilar.append("👔 Vorsitz: KI-Kette (GREMIUM_VORSITZ=kette)")
+        konfig_uyarilar.append(f"🗳️ Gremium-Anbieter: {', '.join(GREMIUM_PROVIDER or PROVIDER_ORDER)} (ohne Ollama)")
+        if SCAN_INTERVAL_SEC < 3 * 3600:
+            konfig_uyarilar.append(f"⚠️ Scan alle {SCAN_INTERVAL_SEC / 3600:g} h: das Gremium braucht je Markt 11 KI-Aufrufe - "
+                                   "das Gratis-Kontingent reicht dafür nicht. Empfehlung: SCAN_INTERVAL_SEC=21600")
     elif GREMIUM_MODUS == "ki":
         konfig_uyarilar.append("⚠️ Gremium: nexus_gremium.py fehlt - alter Ablauf aktiv")
     else:
         konfig_uyarilar.append("🏛️ Gremium: alter Ablauf (GREMIUM_MODUS=regeln)")
+    konfig_uyarilar.append(f"📊 KI-Budget: {KI_BUDGET_STUNDE if KI_BUDGET_STUNDE > 0 else 'ohne Grenze'} Aufrufe/Stunde"
+                           + (f" | Anbieter-Pause nach 2 Fehlern: {KI_PAUSE_MIN:g} Min." if KI_PAUSE_MIN > 0 else ""))
     # Provider-Anzeige mit Key-Anzahl (Merge aus Qwen-Session)
     _prov_display = []
     for _prov in PROVIDER_ORDER:
