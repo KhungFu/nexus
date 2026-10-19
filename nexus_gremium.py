@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NEXUS Gremium (v16.0.1) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
+NEXUS Gremium (v16.0.2) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
 
 Ablauf je Kandidat (gesteuert von nexus_ceo.py):
   1. Python baut ein Dossier mit echten Daten (Kurs, Technik, Fundamentaldaten,
@@ -388,6 +388,19 @@ def _kurz(s, n):
     return s if len(s) <= n else s[:n - 1].rstrip() + "…"
 
 
+_LEER_WOERTER = {"türkçe", "turkce", "deutsch", "english", "englisch", "türkisch", "turkish", "almanca",
+                 "ingilizce", "json", "gerekce", "gerekçe", "begründung", "reason", "none", "null", "n/a", "-", "..."}
+
+
+def _begruendung_ok(t):
+    """Eine Stimme braucht eine echte Begruendung: mindestens 15 Zeichen und drei Woerter,
+    nicht nur ein Platzhalter wie 'Türkçe' (kleine Modelle schreiben sonst die Sprachanweisung ab)."""
+    t = (t or "").strip()
+    if t.lower().strip(" .!") in _LEER_WOERTER:
+        return False
+    return len(t) >= 15 and len(re.findall(r"[^\W\d_]{2,}", t)) >= 3
+
+
 def stimme_lesen(text):
     """KI-Antwort -> {oy, guven, gerekce, prinzip} oder None (keine gueltige Antwort)."""
     d = _json_block(text)
@@ -404,6 +417,9 @@ def stimme_lesen(text):
         guven = int(float(d.get("guven", d.get("confidence", d.get("sicherheit", 50)))))
     except (TypeError, ValueError, OverflowError):
         guven = 50
+    gerekce = " ".join(str(d.get("gerekce", d.get("reason", d.get("begruendung", ""))) or "").split())
+    if not _begruendung_ok(gerekce):
+        return None                  # v16.0.2: ohne echte Begruendung zaehlt die Stimme nicht
     return {
         "oy": oy,
         "guven": max(0, min(100, guven)),
@@ -434,21 +450,32 @@ def vorsitz_lesen(text):
 # ---------------------------------------------------------------------------
 # Abstimmung und Auswertung
 # ---------------------------------------------------------------------------
-def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=1, frist=300, lang=None):
+def abstimmen(sym, dossier_txt, ask, mitglieder=None, parallel=1, frist=300, lang=None, min_antworten=0):
     """Jedes Mitglied in einem eigenen Aufruf fragen. ask(prompt, system) -> str.
     frist: Sekunden fuer alle Stimmen zusammen; wer bis dahin nicht geantwortet hat,
     zaehlt als 'keine Antwort' (ein haengender Anbieter haelt den Scan nicht auf).
     Rueckgabe: Liste in der Reihenfolge der Mitglieder."""
     mitglieder = mitglieder or MITGLIEDER
     prompt = mitglied_prompt(sym, dossier_txt, lang)
+    # v16.0.2 Erdstopp: fehlen schon mehr Antworten, als das Quorum erlaubt, werden die
+    # restlichen Mitglieder nicht mehr gefragt - das spart das freie Kontingent.
+    erlaubt_fehl = len(mitglieder) - int(min_antworten) if min_antworten else len(mitglieder)
+    zaehler = {"fehl": 0}
+    zlock = threading.Lock()
 
     def _eins(m):
+        with zlock:
+            if zaehler["fehl"] > erlaubt_fehl:
+                return {"id": m["id"], "name": m["name"], "ok": False, "oy": BEKLE, "guven": 0,
+                        "gerekce": "", "prinzip": "", "roh": "übersprungen", "uebersprungen": True}
         try:
             roh = ask(prompt, mitglied_system(m, lang))
         except Exception as e:  # ask soll nie werfen, aber sicher ist sicher
             roh = "⚠️ %s" % e
         s = stimme_lesen(roh)
         if s is None:
+            with zlock:
+                zaehler["fehl"] += 1
             return {"id": m["id"], "name": m["name"], "ok": False, "oy": BEKLE, "guven": 0,
                     "gerekce": "", "prinzip": "", "roh": _kurz(roh, 160)}
         s.update({"id": m["id"], "name": m["name"], "ok": True, "roh": ""})
@@ -678,7 +705,7 @@ class Gedaechtnis:
 # ---------------------------------------------------------------------------
 _TXT = {
     "de": {"titel": "🏛️ GREMIUM: {sym}", "kurs": "Kurs {kurs} | Technik Tag: {tech}",
-           "stimmen": "Stimmen", "keine": "keine Antwort", "gew": "Gewichtet: BUY {b} · SELL {s} · BEKLE {w} (Mehrheit ab {m}, Antworten {a}/{n})",
+           "stimmen": "Stimmen", "keine": "keine Antwort", "skip": "nicht gefragt (Quorum schon verfehlt)", "gew": "Gewichtet: BUY {b} · SELL {s} · BEKLE {w} (Mehrheit ab {m}, Antworten {a}/{n})",
            "beschluss": "✅ Beschluss: {r}", "vorsitz_ok": "👔 Vorsitz: ausführen", "vorsitz_stop": "👔 Vorsitz: gestoppt",
            "vorsitz_fehl": "👔 Vorsitz: keine Antwort - kein Trade",
            "beschlussunfaehig": "⏸️ Nicht beschlussfähig: nur {a} von {n} Antworten (mindestens {min})",
@@ -687,9 +714,10 @@ _TXT = {
            "w_kopf": "🏛️ GREMIUM - Glaubwürdigkeit (Stimmen nach {std} h am Kurs gemessen)",
            "w_zeile": "{name}: Gewicht {g} | richtig {r} / falsch {f}",
            "w_leer": "Noch keine bewerteten Stimmen - alle Gewichte 1.0.",
-           "b_kopf": "Letzte Beschlüsse:"},
+           "b_kopf": "Letzte Beschlüsse:",
+           "budget": "🏛️ GREMIUM: {sym} nicht beraten - KI-Budget fast aufgebraucht ({n}/{max} Aufrufe in der letzten Stunde, je Markt nötig: {need}). Nächster Versuch beim nächsten Scan."},
     "en": {"titel": "🏛️ COMMITTEE: {sym}", "kurs": "Price {kurs} | Daily technicals: {tech}",
-           "stimmen": "Votes", "keine": "no answer", "gew": "Weighted: BUY {b} · SELL {s} · WAIT {w} (majority from {m}, answers {a}/{n})",
+           "stimmen": "Votes", "keine": "no answer", "skip": "not asked (quorum already missed)", "gew": "Weighted: BUY {b} · SELL {s} · WAIT {w} (majority from {m}, answers {a}/{n})",
            "beschluss": "✅ Decision: {r}", "vorsitz_ok": "👔 Chair: execute", "vorsitz_stop": "👔 Chair: stopped",
            "vorsitz_fehl": "👔 Chair: no answer - no trade",
            "beschlussunfaehig": "⏸️ No quorum: only {a} of {n} answers (at least {min})",
@@ -698,9 +726,10 @@ _TXT = {
            "w_kopf": "🏛️ COMMITTEE - believability (votes measured against the price after {std} h)",
            "w_zeile": "{name}: weight {g} | right {r} / wrong {f}",
            "w_leer": "No rated votes yet - all weights 1.0.",
-           "b_kopf": "Latest decisions:"},
+           "b_kopf": "Latest decisions:",
+           "budget": "🏛️ COMMITTEE: {sym} not discussed - AI budget almost used up ({n}/{max} calls in the last hour, needed per market: {need}). Next try at the next scan."},
     "tr": {"titel": "🏛️ KURUL: {sym}", "kurs": "Fiyat {kurs} | Günlük teknik: {tech}",
-           "stimmen": "Oylar", "keine": "yanıt yok", "gew": "Ağırlıklı: BUY {b} · SELL {s} · BEKLE {w} (çoğunluk {m}, yanıt {a}/{n})",
+           "stimmen": "Oylar", "keine": "yanıt yok", "skip": "sorulmadı (yeter sayı zaten tutmuyor)", "gew": "Ağırlıklı: BUY {b} · SELL {s} · BEKLE {w} (çoğunluk {m}, yanıt {a}/{n})",
            "beschluss": "✅ Karar: {r}", "vorsitz_ok": "👔 Başkan: uygula", "vorsitz_stop": "👔 Başkan: durdurdu",
            "vorsitz_fehl": "👔 Başkan: yanıt yok - işlem yok",
            "beschlussunfaehig": "⏸️ Karar yeter sayısı yok: {n} üyeden yalnızca {a} yanıt (en az {min})",
@@ -709,7 +738,8 @@ _TXT = {
            "w_kopf": "🏛️ KURUL - güvenilirlik (oylar {std} sa sonra fiyatla ölçülür)",
            "w_zeile": "{name}: ağırlık {g} | doğru {r} / yanlış {f}",
            "w_leer": "Henüz değerlendirilmiş oy yok - tüm ağırlıklar 1.0.",
-           "b_kopf": "Son kararlar:"},
+           "b_kopf": "Son kararlar:",
+           "budget": "🏛️ KURUL: {sym} görüşülmedi - yapay zekâ bütçesi neredeyse doldu (son bir saatte {n}/{max} çağrı, piyasa başına gereken: {need}). Bir sonraki taramada yeniden denenecek."},
 }
 _EMOJI = {BUY: "🟢", SELL: "🔴", BEKLE: "⚪"}
 
@@ -727,6 +757,8 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
     for s in stimmen:
         if s["ok"]:
             z.append("%s %s: %s (%d) - %s" % (_EMOJI[s["oy"]], s["name"], s["oy"], s["guven"], _kurz(s["gerekce"], 160)))
+        elif s.get("uebersprungen"):
+            z.append("⚫ %s: %s" % (s["name"], T["skip"]))
         else:
             z.append("⚫ %s: %s" % (s["name"], T["keine"]))
     g = ergebnis["gewicht"]
@@ -747,6 +779,10 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
         z.append(T[grund].format(a=ergebnis["antworten"], n=ergebnis["mitglieder"], min=min_antworten,
                                  b=ergebnis["anzahl"][BUY], s=ergebnis["anzahl"][SELL]))
     return "\n".join(z)
+
+
+def budget_zeile(sym, n, maxi, need, lang="tr"):
+    return _t(lang)["budget"].format(sym=sym, n=n, max=maxi, need=need)
 
 
 def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
@@ -774,7 +810,7 @@ def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
 # Rollenkarten als Dokument
 # ---------------------------------------------------------------------------
 def doku():
-    z = ["# NEXUS Gremium – Rollenkarten (v16.0.1)", "",
+    z = ["# NEXUS Gremium – Rollenkarten (v16.0.2)", "",
          "Diese Datei wird aus `nexus_gremium.py` erzeugt (`python3 nexus_gremium.py --doku > docs/GREMIUM.md`). "
          "Genau dieser Text geht als Anweisung an die KI. Wer eine Karte ändern will, ändert `MITGLIEDER` in "
          "`nexus_gremium.py` und erzeugt die Datei neu.", "",
