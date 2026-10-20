@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.0.3"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.0.4"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -2087,7 +2087,12 @@ def _gemini_einmal(model, key, contents, system_instruction=None, schnell=False)
             resp = _rufen(denken)
         except Exception as e:
             low = str(e).lower()
-            if not (denken and ("thinking" in low or "budget" in low or "invalid_argument" in low or "400" in low)):
+            # v16.0.4: nur echte Ablehnung der Einstellung (400 INVALID_ARGUMENT zu thinking/budget).
+            # Ein 429 (Kontingent) ist KEINE Ablehnung - vorher wurde das Modell dann bis zum Neustart
+            # ohne kurzes Denken gefragt und war wieder langsam.
+            abgelehnt = (("invalid_argument" in low or "400" in low) and ("thinking" in low or "budget" in low)
+                         and "429" not in low and "resource_exhausted" not in low)
+            if not (denken and abgelehnt):
                 raise
             _GEMINI_OHNE_DENK.add(model)
             logging.warning(f"Gemini {model}: Denk-Einstellung abgelehnt - ohne sie ({str(e)[:100]})")
@@ -10424,10 +10429,33 @@ def handle_language_callback(call):
 
 @bot.message_handler(commands=CMD('status'))
 def handle_status(message):
+    # v16.0.4: Im Gremium-Modus zeigt /status, was wirklich entscheidet (Konto + Gremiumsbeschluesse),
+    # ohne KI-Aufruf. Die alte Einzel-Analyse ("/status alt") kostet eine grosse Gemini-Anfrage,
+    # handelt nie und widersprach dem Gremium - sie bleibt nur auf ausdruecklichen Wunsch.
+    teile = (message.text or "").split()
+    alt = len(teile) > 1 and teile[1].lower() in ("alt", "old", "eski")
+    if gremium_aktiv() and not alt:
+        try:
+            konto, extra = None, ki_status_zeile()
+            h = capital_session.get_headers()
+            if h:
+                acc = get_account_info(h) or {}
+                npos = len(get_positions(h) or [])
+                konto = {"gesamt": acc.get("toplam", "?"), "frei": acc.get("musait", "?"),
+                         "upl": acc.get("upl", "?"), "npos": f"{npos}/{MAX_POSITIONEN}"}
+            _gremium_senden(_NG.status_bericht(_GD, konto, lang=_gremium_lang(),
+                                               naechst=f"{SCAN_INTERVAL_SEC / 3600:g} h", extra=extra))
+        except Exception as e:
+            _bot_send_raw(MY_CHAT_ID, f"❌ Status: {str(e)[:200]}")
+        return
     sync_bericht = sync_pyramiding_from_capital()
     bot.send_message(MY_CHAT_ID, f"Piramiding Senkron: {sync_bericht}")
     bot.send_message(MY_CHAT_ID, f"🔍 {datetime.now().strftime('%d.%m %H:%M')} | NEXUS NATURE {NEXUS_VERSION} - Analiz yapılıyor...")
     analysis = fetch_strategic_response("STATUS_REQUEST")
+    if gremium_aktiv():
+        # Nur Bericht: TRADE-Zeilen sichtbar entschaerfen, damit sie nicht wie ein Auftrag aussehen
+        analysis = ("ℹ️ Alte Einzel-Analyse - nur Bericht, handelt nicht. Es entscheidet das Gremium (/gremium).\n\n"
+                    + re.sub(r"(?m)^TRADE:", "VORSCHLAG (nicht ausgeführt):", analysis))
     bot.send_message(MY_CHAT_ID, analysis[:4000])
 
 def position_detail_lines(p, h, state=None):

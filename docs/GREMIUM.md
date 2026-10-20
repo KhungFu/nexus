@@ -1,4 +1,4 @@
-# NEXUS Gremium – Rollenkarten (v16.0.2)
+# NEXUS Gremium – Rollenkarten (v16.0.4)
 
 Diese Datei wird aus `nexus_gremium.py` erzeugt (`python3 nexus_gremium.py --doku > docs/GREMIUM.md`). Genau dieser Text geht als Anweisung an die KI. Wer eine Karte ändern will, ändert `MITGLIEDER` in `nexus_gremium.py` und erzeugt die Datei neu.
 
