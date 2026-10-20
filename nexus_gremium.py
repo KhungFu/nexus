@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NEXUS Gremium (v16.0.2) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
+NEXUS Gremium (v16.0.4) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
 
 Ablauf je Kandidat (gesteuert von nexus_ceo.py):
   1. Python baut ein Dossier mit echten Daten (Kurs, Technik, Fundamentaldaten,
@@ -715,6 +715,14 @@ _TXT = {
            "w_zeile": "{name}: Gewicht {g} | richtig {r} / falsch {f}",
            "w_leer": "Noch keine bewerteten Stimmen - alle Gewichte 1.0.",
            "b_kopf": "Letzte Beschlüsse:",
+           "s_kopf": "🏛️ NEXUS STATUS (Gremium entscheidet) | {zeit}",
+           "s_konto": "Konto: {gesamt} EUR | verfügbar {frei} EUR | offen {upl} EUR | Positionen {npos}",
+           "s_beschl": "Gremiumsbeschlüsse der letzten {std} h:",
+           "s_leer": "Noch kein Beschluss in den letzten {std} h. Nächster Scan in etwa {naechst}.",
+           "s_zeile": "{zeit} {sym}: {ergebnis} | BUY {b} · SELL {s} · BEKLE {w} | Antworten {a}/11",
+           "s_fuss": "Gehandelt wird nur nach Gremiums-Mehrheit + Vorsitz. Einzelne Stimmen: /gremium",
+           "erg_trade": "✅ {r} ausgeführt", "erg_vstop": "👔 {r} vom Vorsitz gestoppt", "erg_vfehlt": "👔 {r}, Vorsitz ohne Antwort",
+           "erg_keine": "⏸️ keine Mehrheit", "erg_konflikt": "⏸️ gespalten", "erg_quorum": "⏸️ zu wenige Antworten",
            "budget": "🏛️ GREMIUM: {sym} nicht beraten - KI-Budget fast aufgebraucht ({n}/{max} Aufrufe in der letzten Stunde, je Markt nötig: {need}). Nächster Versuch beim nächsten Scan."},
     "en": {"titel": "🏛️ COMMITTEE: {sym}", "kurs": "Price {kurs} | Daily technicals: {tech}",
            "stimmen": "Votes", "keine": "no answer", "skip": "not asked (quorum already missed)", "gew": "Weighted: BUY {b} · SELL {s} · WAIT {w} (majority from {m}, answers {a}/{n})",
@@ -727,6 +735,14 @@ _TXT = {
            "w_zeile": "{name}: weight {g} | right {r} / wrong {f}",
            "w_leer": "No rated votes yet - all weights 1.0.",
            "b_kopf": "Latest decisions:",
+           "s_kopf": "🏛️ NEXUS STATUS (the committee decides) | {zeit}",
+           "s_konto": "Account: {gesamt} EUR | available {frei} EUR | open {upl} EUR | positions {npos}",
+           "s_beschl": "Committee decisions in the last {std} h:",
+           "s_leer": "No decision in the last {std} h. Next scan in about {naechst}.",
+           "s_zeile": "{zeit} {sym}: {ergebnis} | BUY {b} · SELL {s} · WAIT {w} | answers {a}/11",
+           "s_fuss": "Trades only after a committee majority + chair. Single votes: /committee",
+           "erg_trade": "✅ {r} executed", "erg_vstop": "👔 {r} stopped by the chair", "erg_vfehlt": "👔 {r}, chair did not answer",
+           "erg_keine": "⏸️ no majority", "erg_konflikt": "⏸️ split", "erg_quorum": "⏸️ too few answers",
            "budget": "🏛️ COMMITTEE: {sym} not discussed - AI budget almost used up ({n}/{max} calls in the last hour, needed per market: {need}). Next try at the next scan."},
     "tr": {"titel": "🏛️ KURUL: {sym}", "kurs": "Fiyat {kurs} | Günlük teknik: {tech}",
            "stimmen": "Oylar", "keine": "yanıt yok", "skip": "sorulmadı (yeter sayı zaten tutmuyor)", "gew": "Ağırlıklı: BUY {b} · SELL {s} · BEKLE {w} (çoğunluk {m}, yanıt {a}/{n})",
@@ -739,6 +755,14 @@ _TXT = {
            "w_zeile": "{name}: ağırlık {g} | doğru {r} / yanlış {f}",
            "w_leer": "Henüz değerlendirilmiş oy yok - tüm ağırlıklar 1.0.",
            "b_kopf": "Son kararlar:",
+           "s_kopf": "🏛️ NEXUS DURUM (kararı kurul verir) | {zeit}",
+           "s_konto": "Hesap: {gesamt} EUR | kullanılabilir {frei} EUR | açık {upl} EUR | pozisyon {npos}",
+           "s_beschl": "Son {std} saatin kurul kararları:",
+           "s_leer": "Son {std} saatte karar yok. Sonraki tarama yaklaşık {naechst} sonra.",
+           "s_zeile": "{zeit} {sym}: {ergebnis} | BUY {b} · SELL {s} · BEKLE {w} | yanıt {a}/11",
+           "s_fuss": "İşlem yalnızca kurul çoğunluğu + başkan onayıyla açılır. Tek tek oylar: /kurul",
+           "erg_trade": "✅ {r} uygulandı", "erg_vstop": "👔 {r} başkan durdurdu", "erg_vfehlt": "👔 {r}, başkan yanıt vermedi",
+           "erg_keine": "⏸️ çoğunluk yok", "erg_konflikt": "⏸️ kurul bölündü", "erg_quorum": "⏸️ yeter sayı yok",
            "budget": "🏛️ KURUL: {sym} görüşülmedi - yapay zekâ bütçesi neredeyse doldu (son bir saatte {n}/{max} çağrı, piyasa başına gereken: {need}). Bir sonraki taramada yeniden denenecek."},
 }
 _EMOJI = {BUY: "🟢", SELL: "🔴", BEKLE: "⚪"}
@@ -781,6 +805,41 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
     return "\n".join(z)
 
 
+def status_bericht(gd, konto=None, lang="tr", std=48, letzte=12, naechst="?", extra=""):
+    """v16.0.4: /status im Gremium-Modus - Konto + letzte Beschluesse. Kein KI-Aufruf."""
+    T = _t(lang)
+    z = [T["s_kopf"].format(zeit=time.strftime("%d.%m %H:%M"))]
+    if konto:
+        z.append(T["s_konto"].format(**konto))
+    with gd._conn() as c:
+        rows = c.execute("SELECT ts, sym, richtung, karar, grund, buy, sell, bekle, antworten FROM beschluesse "
+                         "WHERE ts>=? ORDER BY ts DESC LIMIT ?", (time.time() - std * 3600, int(letzte))).fetchall()
+    z.append("")
+    if not rows:
+        z.append(T["s_leer"].format(std=int(std), naechst=naechst))
+    else:
+        z.append(T["s_beschl"].format(std=int(std)))
+        for ts, sym, ri, ka, gr, b, s_, w, a in rows:
+            if ka == "UYGULA":
+                erg = T["erg_trade"].format(r=ri)
+            elif gr == "vorsitz_stop":
+                erg = T["erg_vstop"].format(r=ri)
+            elif gr == "vorsitz_fehlt":
+                erg = T["erg_vfehlt"].format(r=ri)
+            elif gr == "konflikt":
+                erg = T["erg_konflikt"]
+            elif gr == "beschlussunfaehig":
+                erg = T["erg_quorum"]
+            else:
+                erg = T["erg_keine"]
+            z.append(T["s_zeile"].format(zeit=time.strftime("%d.%m %H:%M", time.localtime(ts)), sym=sym, ergebnis=erg,
+                                         b="%.1f" % (b or 0), s="%.1f" % (s_ or 0), w="%.1f" % (w or 0), a=a or 0))
+    if extra:
+        z += ["", extra]
+    z += ["", T["s_fuss"]]
+    return "\n".join(z)
+
+
 def budget_zeile(sym, n, maxi, need, lang="tr"):
     return _t(lang)["budget"].format(sym=sym, n=n, max=maxi, need=need)
 
@@ -810,7 +869,7 @@ def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
 # Rollenkarten als Dokument
 # ---------------------------------------------------------------------------
 def doku():
-    z = ["# NEXUS Gremium – Rollenkarten (v16.0.2)", "",
+    z = ["# NEXUS Gremium – Rollenkarten (v16.0.4)", "",
          "Diese Datei wird aus `nexus_gremium.py` erzeugt (`python3 nexus_gremium.py --doku > docs/GREMIUM.md`). "
          "Genau dieser Text geht als Anweisung an die KI. Wer eine Karte ändern will, ändert `MITGLIEDER` in "
          "`nexus_gremium.py` und erzeugt die Datei neu.", "",
