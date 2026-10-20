@@ -376,13 +376,13 @@ def get_eia_petroleum():
         if not records:
             raise ValueError("Keine Daten")
 
-        # Neueste Werte
-        latest  = float(records[0].get("value", 0) or 0)
-        prev_wk = float(records[1].get("value", 0) or 0) if len(records) > 1 else latest
+        # Neueste Werte. Die EIA liefert TAUSEND Barrel (v16.0.3: vorher als Mio. ausgegeben -> Faktor 1000 falsch)
+        latest  = float(records[0].get("value", 0) or 0) / 1000.0
+        prev_wk = float(records[1].get("value", 0) or 0) / 1000.0 if len(records) > 1 else latest
         change  = latest - prev_wk
 
         # 5-Jahres-Durchschnitt (52 Wochen × 5 = 260 - nehmen wir 8 vorliegende)
-        avg_5yr = sum(float(r.get("value", 0) or 0) for r in records) / len(records)
+        avg_5yr = sum(float(r.get("value", 0) or 0) for r in records) / len(records) / 1000.0
         deviation_pct = (latest - avg_5yr) / avg_5yr * 100 if avg_5yr else 0
 
         if deviation_pct > 10:
@@ -406,8 +406,8 @@ def get_eia_petroleum():
             "period":         records[0].get("period", "?"),
             "assets":         ["OIL", "HEATING_OIL", "NATURAL_GAS"],
             "summary": (
-                f"EIA Lagerbestand {latest:.0f}Mio Barrel | "
-                f"Veränderung {change:+.1f}Mio | "
+                f"EIA Rohöl-Lager USA {latest:.1f} Mio. Barrel | "
+                f"Woche {change:+.1f} Mio. | "
                 f"Abweichung 8W-Schnitt {deviation_pct:+.1f}% → {signal}"
             )
         }
@@ -506,111 +506,100 @@ def get_eia_natgas_storage():
 # ============================================================
 _cot_cache = {}
 
+_COT_CODES = {   # v16.0.3: CFTC Contract Market Codes (Legacy, Futures Only)
+    "GOLD": ["088691"], "SILVER": ["084691"], "COPPER": ["085692"], "PLATINUM": ["076651"], "PALLADIUM": ["075651"],
+    "OIL": ["067651", "067411"], "OIL_CRUDE": ["067651", "067411"], "OIL_BRENT": ["06765T"],
+    "NATURAL_GAS": ["023651"], "NATURALGAS": ["023651"], "GASOLINE": ["111659"], "HEATING_OIL": ["022651"],
+    "HEATINGOIL": ["022651"],
+    "WHEAT": ["001602"], "CORN": ["002602"], "SOYBEANS": ["005602"], "SOYBEAN": ["005602"], "SUGAR": ["080732"],
+    "COFFEE": ["083731"], "COCOA": ["073732"], "COTTON": ["033661"],
+}
+_COT_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"   # Legacy Futures Only (Socrata)
+
+
+def _cot_auswerten(asset, rows):
+    """rows: Wochenwerte der CFTC (neueste zuerst oder beliebig). Rueckgabe: Ergebnis-dict.
+    COT-Index = Lage der Netto-Position der Spekulanten (Noncommercials) in ihrer Spanne der
+    letzten 3 Jahre (0 = so short wie nie, 100 = so long wie nie). Extreme gelten als Gegensignal."""
+    def _i(r, k):
+        try:
+            return int(float(r.get(k) or 0))
+        except (TypeError, ValueError):
+            return 0
+    # je Woche den Kontrakt mit dem groessten Open Interest (WTI hat zwei Codes)
+    woche = {}
+    for r in rows:
+        d = str(r.get("report_date_as_yyyy_mm_dd") or "")[:10]
+        if d and (d not in woche or _i(r, "open_interest_all") > _i(woche[d], "open_interest_all")):
+            woche[d] = r
+    if not woche:
+        raise ValueError("keine Daten")
+    daten = sorted(woche)
+    netto = [_i(woche[d], "noncomm_positions_long_all") - _i(woche[d], "noncomm_positions_short_all") for d in daten]
+    rec = woche[daten[-1]]
+    spec_net = netto[-1]
+    comm_net = _i(rec, "comm_positions_long_all") - _i(rec, "comm_positions_short_all")
+    oi = _i(rec, "open_interest_all")
+    veraend = spec_net - netto[-2] if len(netto) > 1 else 0
+    lo, hi = min(netto), max(netto)
+    index = round((spec_net - lo) / (hi - lo) * 100) if hi > lo else 50
+    if len(netto) < 26:
+        signal, sent = "NEUTRAL", 0.0           # zu kurze Historie fuer eine Einordnung
+    elif index >= 90:
+        signal, sent = "CONTRARIAN_BEARISH", -0.6
+    elif index <= 10:
+        signal, sent = "CONTRARIAN_BULLISH", 0.6
+    elif index >= 75:
+        signal, sent = "SLIGHT_BEARISH", -0.3
+    elif index <= 25:
+        signal, sent = "SLIGHT_BULLISH", 0.3
+    else:
+        signal, sent = "NEUTRAL", 0.0
+    lage = "extrem long" if index >= 90 else "extrem short" if index <= 10 else "hoch" if index >= 75 \
+        else "niedrig" if index <= 25 else "mittel"
+    anteil = f" ({spec_net / oi * 100:+.0f} % des Open Interest)" if oi else ""
+    return {
+        "asset": asset, "date": daten[-1], "comm_net": comm_net, "spec_net": spec_net, "open_interest": oi,
+        "cot_index": index, "weekly_change": veraend, "signal": signal, "sentiment": sent,
+        "reason": f"Spekulanten netto {spec_net:+,}, COT-Index {index}/100 ({lage})",
+        "summary": (f"COT {asset} ({daten[-1]}): Spekulanten netto {spec_net:+,}{anteil}, Woche {veraend:+,} | "
+                    f"COT-Index {len(netto)} Wochen: {index}/100 ({lage}) | Produzenten netto {comm_net:+,} → {signal}"),
+    }
+
+
 def get_cot_positioning(asset="GOLD"):
     """
-    CFTC Commitment of Traders - Net-Positioning großer Trader.
-    Contrarian-Signal: Extreme Long der Spekulanten = TOP
-                       Extreme Short der Spekulanten = BODEN
-    Relevant für: GOLD, SILVER, OIL, COPPER
+    CFTC Commitment of Traders (v16.0.3: Socrata-API publicreporting.cftc.gov, Legacy Futures Only).
+    Gegensignal: Spekulanten extrem long (COT-Index >= 90) = Gefahr eines Tops,
+                 extrem short (<= 10) = Gefahr eines Bodens.
+    Vorher: falsche OData-Adresse und absolute Schwellen fuer alle Maerkte gleich -> immer 'nicht erreichbar'.
     """
     global _cot_cache
-    cache_key = asset
+    asset = (asset or "").upper()
     now = datetime.now()
-    if _cot_cache.get(cache_key, {}).get("ts") and \
-       (now - _cot_cache[cache_key]["ts"]).seconds < 3600 * 24:
-        return _cot_cache[cache_key]["data"]
-
-    # CFTC Futures-only Report (CME Group)
-    # Mapping: Asset → CFTC Commodity Code
-    cftc_codes = {
-        "GOLD":    "088691",   # Gold Futures - COMEX
-        "SILVER":  "084691",   # Silver Futures - COMEX
-        "OIL":     "067651",   # Crude Oil WTI - NYMEX
-        "COPPER":  "085692",   # Copper Futures - COMEX
-        "NATURAL_GAS": "023651",  # Natural Gas - NYMEX
-        "WHEAT":   "001602",   # Wheat Futures - CBOT
-        "CORN":    "002602",   # Corn Futures - CBOT
-    }
-    code = cftc_codes.get(asset.upper())
-
+    c = _cot_cache.get(asset, {})
+    if c.get("ts") and (now - c["ts"]).total_seconds() < 3600 * 12:
+        return c["data"]
+    codes = _COT_CODES.get(asset)
+    if not codes:
+        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"COT {asset}: kein CFTC-Markt hinterlegt"}
     try:
-        if code:
-            # CFTC Public Reporting API (OData, kein Key)
-            url = (
-                f"https://publicreporting.cftc.gov/api/odata/v1/"
-                f"HistoricalViewOiCombined?"
-                f"$filter=cftc_commodity_code eq '{code}'"
-                f"&$orderby=report_date_as_yyyy_mm_dd desc"
-                f"&$top=4"
-                f"&$format=json"
-            )
-            r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                records = r.json().get("value", [])
-            else:
-                records = []
-        else:
-            records = []
-
-        if not records:
-            # Fallback: öffentliche TXT-Datei
-            url2 = "https://www.cftc.gov/dea/futures/deacmesf.txt"
-            r2 = requests.get(url2, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
-            if r2.status_code == 200:
-                # CSV parsen - Header-Zeile überspringen
-                lines = [l for l in r2.text.splitlines() if asset.upper()[:4] in l.upper()]
-                records = []  # Vereinfacht - OData bevorzugt
-            else:
-                raise ValueError("CFTC nicht erreichbar")
-
-        if not records:
-            return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"COT {asset}: keine Daten"}
-
-        rec = records[0]
-        # Felder aus CFTC API
-        comm_long  = int(rec.get("comm_positions_long_all",  0) or 0)
-        comm_short = int(rec.get("comm_positions_short_all", 0) or 0)
-        spec_long  = int(rec.get("noncomm_positions_long_all",  0) or 0)
-        spec_short = int(rec.get("noncomm_positions_short_all", 0) or 0)
-        date       = rec.get("report_date_as_yyyy_mm_dd", "?")
-
-        comm_net = comm_long - comm_short
-        spec_net = spec_long - spec_short
-
-        # Contrarian-Signal
-        if spec_net > 200000:
-            signal, sent = "CONTRARIAN_BEARISH", -0.7
-            reason = f"Spekulanten extrem long ({spec_net:+,}) → Contrarian SELL"
-        elif spec_net < -100000:
-            signal, sent = "CONTRARIAN_BULLISH", 0.7
-            reason = f"Spekulanten extrem short ({spec_net:+,}) → Contrarian BUY"
-        elif spec_net > 100000:
-            signal, sent = "SLIGHT_BEARISH", -0.3
-            reason = f"Spekulanten leicht long ({spec_net:+,})"
-        elif spec_net < -50000:
-            signal, sent = "SLIGHT_BULLISH", 0.3
-            reason = f"Spekulanten leicht short ({spec_net:+,})"
-        else:
-            signal, sent = "NEUTRAL", 0.0
-            reason = f"Spekulanten neutral ({spec_net:+,})"
-
-        result = {
-            "asset":       asset,
-            "date":        date,
-            "comm_net":    comm_net,
-            "spec_net":    spec_net,
-            "signal":      signal,
-            "sentiment":   sent,
-            "reason":      reason,
-            "summary":     f"COT {asset} ({date}): Komm={comm_net:+,} | Spek={spec_net:+,} → {signal}"
-        }
-        _cot_cache[cache_key] = {"ts": now, "data": result}
+        liste = ",".join(f"'{x}'" for x in codes)
+        params = {"$where": f"cftc_contract_market_code in({liste})",
+                  "$order": "report_date_as_yyyy_mm_dd DESC", "$limit": str(160 * len(codes)),
+                  "$select": "report_date_as_yyyy_mm_dd,cftc_contract_market_code,open_interest_all,"
+                             "noncomm_positions_long_all,noncomm_positions_short_all,"
+                             "comm_positions_long_all,comm_positions_short_all"}
+        r = requests.get(_COT_URL, params=params, timeout=20, headers={"User-Agent": "NEXUS/16 (python-requests)"})
+        if r.status_code != 200:
+            raise ValueError(f"CFTC HTTP {r.status_code}: {r.text[:120]}")
+        result = _cot_auswerten(asset, r.json())
+        _cot_cache[asset] = {"ts": now, "data": result}
         logging.info(f"COT {asset}: {result['summary']}")
         return result
-
     except Exception as e:
         logging.warning(f"COT {asset}: {e}")
-        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"COT {asset} Fehler: {e}"}
+        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"COT {asset}: k. A. ({str(e)[:80]})"}
 
 
 # ============================================================
@@ -620,91 +609,95 @@ def get_cot_positioning(asset="GOLD"):
 # ============================================================
 _usda_cache = {}
 
-def get_usda_supply_demand(commodity="Cocoa"):
+_USDA_CODES = {   # v16.0.3: PSD-Codes (apps.fas.usda.gov/PSDOnlineApi). Kakao fuehrt das USDA nicht.
+    "Wheat": "0410000", "Corn": "0440000", "Coffee": "0711100", "Sugar": "0612000",
+    "Soybeans": "2222000", "Cotton": "2631000", "Rice": "0422110",
+}
+_USDA_URL = "https://apps.fas.usda.gov/PSDOnlineApi/api/query/RunQuery"
+_USDA_ATTR = {"Production": 28, "Domestic Consumption": 125, "Ending Stocks": 176}
+
+
+def _usda_auswerten(commodity, rows):
+    """rows: queryResult der PSD-Abfrage (Welt). Spalten je Wirtschaftsjahr ('2025/2026').
+    Kennzahl: Endbestand im Verhaeltnis zum Verbrauch (stocks-to-use), Vorjahr gegen aktuelles Jahr."""
+    werte, attr = {}, ""
+    for r in rows:
+        attr = (r.get("attribute") or attr or "").strip()      # das Feld steht nur in der ersten Zeile je Gruppe
+        land = (r.get("country") or "").strip()
+        if land and land != "World":
+            continue
+        for k, v in r.items():
+            if k[:4].isdigit() and v not in (None, ""):
+                try:
+                    werte.setdefault(attr, {})[k] = float(str(v).replace(",", ""))
+                except ValueError:
+                    pass
+    ends, verbrauch = werte.get("Ending Stocks", {}), werte.get("Domestic Consumption", {})
+    jahre = sorted(set(ends) & set(verbrauch))
+    if len(jahre) < 2:
+        raise ValueError("keine Weltbilanz in der Antwort")
+    j0, j1 = jahre[-2], jahre[-1]
+    stu0 = ends[j0] / verbrauch[j0] * 100 if verbrauch[j0] else 0
+    stu1 = ends[j1] / verbrauch[j1] * 100 if verbrauch[j1] else 0
+    change_pct = (ends[j1] - ends[j0]) / ends[j0] * 100 if ends[j0] else 0
+    if change_pct < -10:
+        signal, sent = "BULLISH", 0.6
+    elif change_pct < -3:
+        signal, sent = "SLIGHT_BULLISH", 0.3
+    elif change_pct > 10:
+        signal, sent = "BEARISH", -0.6
+    elif change_pct > 3:
+        signal, sent = "SLIGHT_BEARISH", -0.3
+    else:
+        signal, sent = "NEUTRAL", 0.0
+    prod = werte.get("Production", {})
+    p_txt = (f" | Produktion {prod[j1]:,.0f} ({(prod[j1] - prod[j0]) / prod[j0] * 100:+.1f} %)"
+             if prod.get(j0) and prod.get(j1) else "")
+    return {
+        "commodity": commodity, "year": j1, "ending_stocks_current": ends[j1], "ending_stocks_prev": ends[j0],
+        "stocks_to_use": round(stu1, 1), "change_pct": round(change_pct, 1), "signal": signal, "sentiment": sent,
+        "summary": (f"USDA Welt {commodity} {j1}: Endbestand {ends[j1]:,.0f} ({change_pct:+.1f} % zum Vorjahr), "
+                    f"Bestand/Verbrauch {stu1:.1f} % (Vorjahr {stu0:.1f} %){p_txt} → {signal}"),
+    }
+
+
+def get_usda_supply_demand(commodity="Wheat"):
     """
-    USDA PSD Online - Weltweite Angebot/Nachfrage-Bilanz.
-    Commodities: Cocoa, Coffee, Sugar, Wheat, Corn, Soybeans
-    Signal: Ending Stocks Veränderung YoY
-    Relevant für: COCOA, COFFEE, WHEAT, CORN, SUGAR
+    USDA PSD - weltweite Angebot/Nachfrage-Bilanz (v16.0.3: PSDOnlineApi RunQuery, ohne Key;
+    die alte Adresse /psdonline/api/psd/commodity gibt es nicht mehr -> immer 404).
+    Signal: Endbestand Welt gegen Vorjahr; dazu Bestand/Verbrauch.
     """
     global _usda_cache
     now = datetime.now()
-    if _usda_cache.get(commodity, {}).get("ts") and \
-       (now - _usda_cache[commodity]["ts"]).seconds < 3600 * 12:
-        return _usda_cache[commodity]["data"]
-
-    # USDA PSD Commodity Codes
-    usda_codes = {
-        "Cocoa":    "072300", "Coffee":   "073200", "Sugar":    "066300",
-        "Wheat":    "010100", "Corn":     "040200", "Soybeans": "022110",
-        "Cotton":   "082130", "Rice":     "027000",
-    }
-    code = usda_codes.get(commodity, "072300")
-    current_year = datetime.now().year
-
+    c = _usda_cache.get(commodity, {})
+    if c.get("ts") and (now - c["ts"]).total_seconds() < 3600 * 12:
+        return c["data"]
+    code = _USDA_CODES.get(commodity)
+    if not code:
+        return {"signal": "UNKNOWN", "sentiment": 0,
+                "summary": f"USDA {commodity}: keine USDA-Bilanz (für Kakao gibt es sie nicht) - siehe COT"}
     try:
-        url = (
-            f"https://apps.fas.usda.gov/psdonline/api/psd/commodity"
-            f"?commodityCode={code}"
-            f"&marketYear={current_year - 1},{current_year}"
-        )
-        r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+        jahr = now.year
+        payload = {
+            "queryId": 0, "commodityGroupCode": None, "commodities": [code],
+            "attributes": list(_USDA_ATTR.values()), "countries": ["R00"],
+            "marketYears": list(range(jahr - 2, jahr + 2)),
+            "chkCommoditySummary": False, "chkAttribSummary": False, "chkCountrySummary": False,
+            "commoditySummaryText": "", "attribSummaryText": "", "countrySummaryText": "",
+            "optionColumn": "year", "chkTopCountry": False, "topCountryCount": "", "chkfileFormat": False,
+            "chkPrevMonth": False, "chkMonthChange": False, "chkCodes": False, "chkYearChange": False,
+            "queryName": "", "sortOrder": "Commodity/Attribute/Country", "topCountryState": False,
+        }
+        r = requests.post(_USDA_URL, json=payload, timeout=25, headers={"User-Agent": "NEXUS/16 (python-requests)"})
         if r.status_code != 200:
             raise ValueError(f"HTTP {r.status_code}")
-
-        records = r.json()
-        if not records:
-            raise ValueError("Keine Daten")
-
-        # Ending Stocks YoY vergleichen
-        # Attribut 176 = Ending Stocks (1000 MT)
-        ending_stocks = {}
-        for rec in records:
-            if rec.get("attributeId") == 176:
-                yr = rec.get("marketYear", 0)
-                val = float(rec.get("value", 0) or 0)
-                if yr in (current_year - 1, current_year):
-                    ending_stocks[yr] = val
-
-        if len(ending_stocks) >= 2:
-            curr = ending_stocks.get(current_year, 0)
-            prev = ending_stocks.get(current_year - 1, 0)
-            change_pct = (curr - prev) / prev * 100 if prev else 0
-
-            if change_pct < -15:
-                signal, sent = "BULLISH", 0.8
-            elif change_pct < -5:
-                signal, sent = "SLIGHT_BULLISH", 0.4
-            elif change_pct > 15:
-                signal, sent = "BEARISH", -0.8
-            elif change_pct > 5:
-                signal, sent = "SLIGHT_BEARISH", -0.4
-            else:
-                signal, sent = "NEUTRAL", 0.0
-        else:
-            curr = prev = change_pct = 0
-            signal, sent = "UNKNOWN", 0.0
-
-        result = {
-            "commodity":    commodity,
-            "ending_stocks_current":  curr,
-            "ending_stocks_prev":     prev,
-            "change_pct":   round(change_pct, 1),
-            "signal":       signal,
-            "sentiment":    sent,
-            "year":         current_year,
-            "summary": (
-                f"USDA {commodity}: Ending Stocks {curr:.0f}k MT "
-                f"(YoY {change_pct:+.1f}%) → {signal}"
-            )
-        }
+        result = _usda_auswerten(commodity, r.json().get("queryResult", []))
         _usda_cache[commodity] = {"ts": now, "data": result}
         logging.info(f"USDA {commodity}: {result['summary']}")
         return result
-
     except Exception as e:
         logging.warning(f"USDA {commodity}: {e}")
-        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"USDA {commodity} Fehler: {e}"}
+        return {"signal": "UNKNOWN", "sentiment": 0, "summary": f"USDA {commodity}: k. A. ({str(e)[:80]})"}
 
 
 # ============================================================
@@ -915,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.0.2"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.0.3"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -942,8 +935,8 @@ GREMIUM_MEHRHEIT_KRYPTO = _env_zahl("GREMIUM_MEHRHEIT_KRYPTO", 5)  # Krypto am W
 GREMIUM_MIN_ANTWORTEN  = _env_zahl("GREMIUM_MIN_ANTWORTEN", 8, int)   # weniger gueltige Antworten = nicht beschlussfaehig
 GREMIUM_MAX_KANDIDATEN = _env_zahl("GREMIUM_MAX_KANDIDATEN", 2, int)  # so viele Maerkte beraet das Gremium je Scan hoechstens
 GREMIUM_GUELTIG_STD    = _env_zahl("GREMIUM_GUELTIG_STD", 4)       # ein Beschluss gilt so viele Stunden (kein neues Beraten desselben Markts)
-GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 1, int)     # gleichzeitige KI-Aufrufe (1 = nacheinander, schont die Minuten-Limits der Gratis-Anbieter)
-GREMIUM_FRIST          = _env_zahl("GREMIUM_FRIST", 420, int)      # Sekunden fuer alle 11 Stimmen zusammen; wer bis dahin nicht antwortet, zaehlt als keine Antwort
+GREMIUM_PARALLEL       = _env_zahl("GREMIUM_PARALLEL", 3, int)     # gleichzeitige KI-Aufrufe (1 = nacheinander, schont die Minuten-Limits der Gratis-Anbieter)
+GREMIUM_FRIST          = _env_zahl("GREMIUM_FRIST", 900, int)      # Sekunden fuer alle 11 Stimmen zusammen; wer bis dahin nicht antwortet, zaehlt als keine Antwort
 GREMIUM_BEWERTUNG_STD  = _env_zahl("GREMIUM_BEWERTUNG_STD", 24)    # nach so vielen Stunden wird jede Stimme am Kurs gemessen
 GREMIUM_GEWICHTUNG     = os.getenv("GREMIUM_GEWICHTUNG", "true").split("#")[0].strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
 # Vorsitz: claude = Claude Code CLI (claude -p) mit deinem Claude-Abo; kette = dieselbe KI-Kette wie die Mitglieder
@@ -2064,24 +2057,53 @@ def gemini_last_fail_text():
     return "\n".join(zeilen)
 
 
-def _gemini_einmal(model, key, contents, system_instruction=None):
-    """Ein einzelner Aufruf. Rueckgabe: (text, art, fehlertext); text ist None bei Fehler."""
-    try:
-        client = genai.Client(api_key=key)
+# v16.0.3: kurze Gremiums-Stimmen - wenig "Nachdenken", begrenzte Laenge, Zeitlimit je Aufruf.
+# Die Flash-Modelle denken sonst vor jeder Antwort lange (im Log: 70-205 s je Stimme).
+GEMINI_DENK_BUDGET = _env_zahl("GEMINI_DENK_BUDGET", 512, int)      # Denk-Token je Gremiums-Stimme (0 = aus)
+GEMINI_TIMEOUT_STIMME = _env_zahl("GEMINI_TIMEOUT_STIMME", 120, int)  # Sekunden je Aufruf, danach naechster Anbieter
+_GEMINI_OHNE_DENK = set()      # Modelle, die die Denk-Einstellung ablehnen -> ohne sie fragen
+
+
+def _gemini_einmal(model, key, contents, system_instruction=None, schnell=False):
+    """Ein einzelner Aufruf. Rueckgabe: (text, art, fehlertext); text ist None bei Fehler.
+    schnell=True (Gremium): kleines Denk-Budget, kurze Antwort, Zeitlimit GEMINI_TIMEOUT_STIMME.
+    Lehnt ein Modell die Denk-Einstellung ab, wird sofort ohne sie gefragt und das gemerkt."""
+    def _rufen(denken):
+        opts = {"api_key": key}
+        if schnell and GEMINI_TIMEOUT_STIMME > 0 and hasattr(types, "HttpOptions"):   # aeltere SDKs: ohne Zeitlimit
+            opts["http_options"] = types.HttpOptions(timeout=GEMINI_TIMEOUT_STIMME * 1000)
+        client = genai.Client(**opts)
         cfg = {"system_instruction": system_instruction} if system_instruction else {}
-        resp = client.models.generate_content(
+        if schnell:
+            cfg["max_output_tokens"] = 1024 + (GEMINI_DENK_BUDGET if denken else 0)
+            if denken and hasattr(types, "ThinkingConfig"):
+                cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=GEMINI_DENK_BUDGET)
+        return client.models.generate_content(
             model=model, contents=contents,
             config=types.GenerateContentConfig(**cfg) if cfg else None)
+    denken = schnell and model not in _GEMINI_OHNE_DENK
+    try:
+        try:
+            resp = _rufen(denken)
+        except Exception as e:
+            low = str(e).lower()
+            if not (denken and ("thinking" in low or "budget" in low or "invalid_argument" in low or "400" in low)):
+                raise
+            _GEMINI_OHNE_DENK.add(model)
+            logging.warning(f"Gemini {model}: Denk-Einstellung abgelehnt - ohne sie ({str(e)[:100]})")
+            resp = _rufen(False)
         text = getattr(resp, "text", None)
         if text and text.strip():
             return text, "", ""
         return None, "modell", "leere Antwort"
     except Exception as e:
         err = str(e)
+        if schnell and any(x in err.lower() for x in ("timed out", "timeout", "readtimeout")):
+            logging.warning(f"Gemini {model}: keine Antwort in {GEMINI_TIMEOUT_STIMME} s - nächster Anbieter")
         return None, _gemini_classify(err), err
 
 
-def gemini_chain_generate(contents, system_instruction=None):
+def gemini_chain_generate(contents, system_instruction=None, schnell=False):
     """Anfrage an Gemini ueber die Modell-Kette. Gibt den Antworttext zurueck oder None,
     wenn kein Modell/Key der Kette liefert. Fallen in einem Durchgang Modelle weg
     (gesperrt / Tageskontingent leer), wird einmal mit den nachrueckenden Modellen
@@ -2115,12 +2137,12 @@ def gemini_chain_generate(contents, system_instruction=None):
                 if _GEMINI_BAD_KEYS.get(key, 0) > time.time():      # abgelehnter Key: ueberspringen
                     _gemini_key_idx = (_gemini_key_idx + 1) % len(keys)
                     continue
-                text, art, err = _gemini_einmal(model, key, contents, system_instruction)
+                text, art, err = _gemini_einmal(model, key, contents, system_instruction, schnell)
                 if text is None and art == "modell" and not wiederholt and _GEMINI_503_PAUSE > 0:
                     wiederholt = True
                     logging.warning(f"Gemini {model}: {err[:100]} - zweiter Versuch in {_GEMINI_503_PAUSE:g} s")
                     time.sleep(_GEMINI_503_PAUSE)
-                    text, art, err = _gemini_einmal(model, key, contents, system_instruction)
+                    text, art, err = _gemini_einmal(model, key, contents, system_instruction, schnell)
                 if text is not None:
                     logging.info(f"[OK] Başarılı: {model} | key=...{key[-6:]}")
                     return text
@@ -2954,7 +2976,7 @@ def _ki_kuerzen(text, n=6000):
 # UNIVERSELLER AI-CALLER — alle Provider nach PROVIDER_ORDER
 # ============================================================
 def call_ai(prompt: str, system: str = "", use_grounding: bool = False,
-            reihenfolge=None, ohne_ollama: bool = False) -> str:
+            reihenfolge=None, ohne_ollama: bool = False, schnell: bool = False) -> str:
     """
     Ruft KI-Provider in der Reihenfolge aus PROVIDER_ORDER auf.
     Ollama-Priorität (OLLAMA_PRIORITY) wird berücksichtigt:
@@ -3000,7 +3022,7 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False,
 
     def _try_gemini():
         # v15.15: gleiche Modell-Schleife wie die Hauptanalyse (Logik aus swarm.py)
-        text = gemini_chain_generate(prompt, system or None)
+        text = gemini_chain_generate(prompt, system or None, schnell=schnell)
         return text.strip() if text else None
 
     def _msgs():
@@ -5757,7 +5779,7 @@ def berechne_signal_score(sym, epic):
             fred_signal=_fred_sig,
         )
         logging.info(
-            f"GREMIUM {sym}: {gremium_ja_cnt}/5 JA | "
+            f"SIGNAL-SCORE alte 5 Regeln {sym}: {gremium_ja_cnt}/5 JA | "
             f"{'GEÇTI' if gremium_karar else 'BLOK'} | "
             + " | ".join(f"{m.split('_')[0]}:{v}" for m, v in gremium_oylar.items())
         )
@@ -9916,12 +9938,7 @@ def _gremium_makro():
     _q("cal", get_economic_calendar)
     _q("eia", get_eia_petroleum)
     _q("eia_gas", get_eia_natgas_storage)
-    _q("cot_gold", lambda: get_cot_positioning("GOLD"))
-    _q("cot_oil", lambda: get_cot_positioning("OIL"))
-    _q("cot_silver", lambda: get_cot_positioning("SILVER"))
-    _q("usda_wheat", lambda: get_usda_supply_demand("Wheat"))
-    _q("usda_coffee", lambda: get_usda_supply_demand("Coffee"))
-    _q("usda_cocoa", lambda: get_usda_supply_demand("Cocoa"))
+    # v16.0.3: COT und USDA werden je Markt im Dossier geholt (gecacht), nicht mehr nur fuer Gold/Oel/Silber
     _q("wx_agrar", lambda: get_weather_signal("AGRAR"))
     _q("wx_energy", lambda: get_weather_signal("ENERGY"))
     try:
@@ -10012,16 +10029,22 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
             fund.append("EIA Erdgas-Speicher: " + _g_sum(makro.get("eia_gas")))
         else:
             fund.append("EIA Öl-Lager: " + _g_sum(makro.get("eia")))
-            fund.append("COT Öl: " + _g_sum(makro.get("cot_oil")))
         fund.append("Wetter Energie: " + _g_sum(makro.get("wx_energy"), "notes"))
-    if "GOLD" in su:
-        fund.append("COT Gold: " + _g_sum(makro.get("cot_gold")))
-    if "SILVER" in su:
-        fund.append("COT Silber: " + _g_sum(makro.get("cot_silver")))
+    # v16.0.3: Positionierung der Spekulanten (CFTC) fuer jeden Rohstoff mit US-Terminmarkt
+    cot_key = su if su in _COT_CODES else ("NATURAL_GAS" if "NATURAL" in su else None)
+    if cot_key:
+        try:
+            fund.append("CFTC COT: " + _g_sum(get_cot_positioning(cot_key)))
+        except Exception as e:
+            fund.append(f"CFTC COT: k. A. ({str(e)[:60]})")
+    usda_key = {"WHEAT": "Wheat", "CORN": "Corn", "COFFEE": "Coffee", "SUGAR": "Sugar", "SOYBEANS": "Soybeans",
+                "SOYBEAN": "Soybeans", "COTTON": "Cotton"}.get(su)
+    if usda_key:
+        try:
+            fund.append("USDA Weltbilanz: " + _g_sum(get_usda_supply_demand(usda_key)))
+        except Exception as e:
+            fund.append(f"USDA Weltbilanz: k. A. ({str(e)[:60]})")
     if grp == "AGRAR":
-        if "WHEAT" in su: fund.append("USDA Weizen: " + _g_sum(makro.get("usda_wheat")))
-        if "COFFEE" in su: fund.append("USDA Kaffee: " + _g_sum(makro.get("usda_coffee")))
-        if "COCOA" in su: fund.append("USDA Kakao: " + _g_sum(makro.get("usda_cocoa")))
         fund.append("Wetter Agrar: " + _g_sum(makro.get("wx_agrar"), "notes"))
     if fund:
         z.append("FUNDAMENTAL: " + " | ".join(fund))
@@ -10166,7 +10189,7 @@ def _gremium_ask(prompt, system):
     # v16.0.2: nie Ollama (kleines lokales Modell gibt Platzhalter statt Begruendungen),
     # eigene Reihenfolge aus GREMIUM_PROVIDER, sonst PROVIDER_ORDER
     return call_ai(prompt, system=system, use_grounding=False,
-                   reihenfolge=GREMIUM_PROVIDER or None, ohne_ollama=True)
+                   reihenfolge=GREMIUM_PROVIDER or None, ohne_ollama=True, schnell=True)
 
 
 # Umgebung fuer claude -p: nur was die CLI braucht - keine Schluessel aus der .env (TG_TOKEN, CAPITAL_*, ...)
