@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NEXUS Gremium (v16.0.4) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
+NEXUS Gremium (v16.1) - 11 Mentoren stimmen unabhaengig ab, der Vorsitz prueft.
 
 Ablauf je Kandidat (gesteuert von nexus_ceo.py):
   1. Python baut ein Dossier mit echten Daten (Kurs, Technik, Fundamentaldaten,
@@ -332,6 +332,11 @@ def vorsitz_prompt(sym, richtung, dossier_txt, stimmen, ergebnis, lang=None):
              ergebnis["gewicht"][BUY], ergebnis["gewicht"][SELL], ergebnis["gewicht"][BEKLE],
              ergebnis["mehrheit"]),
          "", "STIMMEN:"]
+    if ergebnis.get("regel") == "lern":
+        z.insert(2, "LERNMODUS (Demo-Konto): Hier reicht eine Minderheit von mindestens %s Mitgliedern fuer eine Richtung "
+                    "bei hoechstens %s Gegenstimmen; BEKLE gilt als Enthaltung. Pruefe deshalb besonders, ob die "
+                    "Begruendungen der Befuerworter durch die Daten getragen werden." % (
+                        ergebnis.get("lern_r", "?"), ergebnis.get("lern_g", "?")))
     for s in stimmen:
         if s["ok"]:
             z.append("- %s: %s (Sicherheit %d) - %s [%s]" % (
@@ -509,13 +514,16 @@ def gewichte_normieren(gewichte, ids):
     return {i: v * f for i, v in roh.items()}
 
 
-def auswerten(stimmen, gewichte=None, mehrheit=6.0, min_antworten=8, konflikt=3):
+def auswerten(stimmen, gewichte=None, mehrheit=6.0, min_antworten=8, konflikt=3, lern=None):
     """Stimmen zaehlen. Rueckgabe dict:
        richtung   BUY / SELL / None
        grund      warum (wenn None)
        gewicht    {BUY, SELL, BEKLE} gewichtete Summen
        anzahl     {BUY, SELL, BEKLE} ungewichtete Zahl gueltiger Stimmen
-       antworten  Zahl gueltiger Antworten"""
+       antworten  Zahl gueltiger Antworten
+    lern=(min_richtung, max_gegen) - v16.1 Lernmodus (nur Demo): BEKLE ist Enthaltung. Beschluss,
+       wenn mindestens min_richtung Mitglieder dieselbe Richtung waehlen und hoechstens max_gegen
+       die Gegenrichtung (ungewichtete Koepfe, wie in der Auswertung vom 25.10.)."""
     g = gewichte_normieren(gewichte, [s["id"] for s in stimmen])
     gew = {BUY: 0.0, SELL: 0.0, BEKLE: 0.0}
     anz = {BUY: 0, SELL: 0, BEKLE: 0}
@@ -530,6 +538,15 @@ def auswerten(stimmen, gewichte=None, mehrheit=6.0, min_antworten=8, konflikt=3)
            "antworten": antworten, "mitglieder": len(stimmen), "mehrheit": float(mehrheit)}
     if antworten < min_antworten:
         erg["grund"] = "beschlussunfaehig"
+        return erg
+    if lern:
+        mind, gegen = int(lern[0]), int(lern[1])
+        erg.update({"regel": "lern", "lern_r": mind, "lern_g": gegen})
+        for r, o in ((BUY, SELL), (SELL, BUY)):
+            if anz[r] >= mind and anz[o] <= gegen and anz[r] > anz[o]:
+                erg["richtung"] = r
+                return erg
+        erg["grund"] = "konflikt" if anz[BUY] > gegen and anz[SELL] > gegen else "keine_mehrheit"
         return erg
     if konflikt and anz[BUY] >= konflikt and anz[SELL] >= konflikt:
         erg["grund"] = "konflikt"
@@ -599,9 +616,26 @@ def _preis_text(x):
 # ---------------------------------------------------------------------------
 # Gedaechtnis: Stimmen, Bewertung, Glaubwuerdigkeit, Beschluesse
 # ---------------------------------------------------------------------------
+def gruppe_std(sym):
+    """Markt-Gruppe fuer die faire Bewertung (eine Bewertung je Mitglied, Gruppe und Tag)."""
+    su = (sym or "").upper()
+    if su.endswith(("_USD", "_EUR", "USD", "EUR")) and su not in ("EURUSD",):
+        return "KRYPTO"
+    if any(x in su for x in ("OIL", "GAS", "BRENT", "HEATING", "GASOLINE")):
+        return "ENERGIE"
+    if any(x in su for x in ("GOLD", "SILVER", "COPPER", "PLATIN", "PALLAD", "ZINC", "NICKEL", "ALUMIN")):
+        return "METALLE"
+    if any(x in su for x in ("WHEAT", "CORN", "SOY", "COFFEE", "SUGAR", "COTTON", "COCOA")):
+        return "AGRAR"
+    return su
+
+
 class Gedaechtnis:
-    def __init__(self, pfad):
+    HORIZONTE = (("3t", 72.0), ("7t", 168.0))     # v16.1: zusaetzlich nach 3 und 7 Tagen messen
+
+    def __init__(self, pfad, gruppe_fn=None):
         self.pfad = pfad
+        self.gruppe = gruppe_fn or gruppe_std
         self._lock = threading.Lock()
         with self._conn() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS stimmen (
@@ -611,6 +645,11 @@ class Gedaechtnis:
             c.execute("""CREATE TABLE IF NOT EXISTS beschluesse (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, sym TEXT, richtung TEXT,
                 karar TEXT, grund TEXT, buy REAL, sell REAL, bekle REAL, antworten INTEGER)""")
+            spalten = {r[1] for r in c.execute("PRAGMA table_info(stimmen)")}
+            for h, _std in self.HORIZONTE:
+                if f"rendite_{h}" not in spalten:          # aeltere Datenbank: Spalten nachruesten
+                    c.execute(f"ALTER TABLE stimmen ADD COLUMN rendite_{h} REAL")
+                    c.execute(f"ALTER TABLE stimmen ADD COLUMN richtig_{h} INTEGER")
             c.execute("CREATE INDEX IF NOT EXISTS ix_st_offen ON stimmen(bewertet, ts)")
             c.execute("CREATE INDEX IF NOT EXISTS ix_be_sym ON beschluesse(sym, ts)")
 
@@ -656,9 +695,7 @@ class Gedaechtnis:
         with self._conn() as c:
             offen = c.execute("SELECT id, epic, oy, preis, atr_pct FROM stimmen WHERE bewertet=0 AND ts<=?",
                               (jetzt - std * 3600,)).fetchall()
-        if not offen:
-            return 0
-        kurse, n = {}, 0
+        kurse, n = {}, 0            # v16.1: kein frueher Abbruch - die 3- und 7-Tage-Messung laeuft auch ohne neue 24-h-Stimmen
         for sid, epic, oy, p0, atr in offen:
             if epic not in kurse:
                 try:
@@ -679,14 +716,52 @@ class Gedaechtnis:
             with self._lock, self._conn() as c:
                 c.execute("UPDATE stimmen SET bewertet=?, richtig=?, rendite=? WHERE id=?", upd)
             n += 1
+        n += self._bewerten_lang(preis_fn, faktor, jetzt, kurse)
         return n
 
-    def bilanz(self):
-        """{mitglied: (richtig, falsch)} aus allen bewerteten Richtungs-Stimmen."""
+    def _bewerten_lang(self, preis_fn, faktor, jetzt, kurse):
+        """v16.1: Richtungs-Stimmen auch nach 3 und 7 Tagen messen (Kurs beim ersten Scan danach)."""
+        n = 0
+        for h, std in self.HORIZONTE:
+            with self._conn() as c:
+                offen = c.execute(f"SELECT id, epic, oy, preis, atr_pct FROM stimmen WHERE oy IN ('BUY','SELL') "
+                                  f"AND rendite_{h} IS NULL AND ts<=? AND preis>0", (jetzt - std * 3600,)).fetchall()
+            for sid, epic, oy, p0, atr in offen:
+                if epic not in kurse:
+                    try:
+                        kurse[epic] = float(preis_fn(epic) or 0)
+                    except Exception:
+                        kurse[epic] = 0.0
+                p1 = kurse[epic]
+                if p1 <= 0:
+                    continue
+                ret = (p1 - p0) / p0 * 100
+                # Schwelle waechst mit der Wurzel der Zeit (3 Tage ~ 1,7 x, 7 Tage ~ 2,6 x Tagesspanne-Anteil)
+                schwelle = max(0.1, faktor * float(atr or 0) * (std / 24.0) ** 0.5)
+                gut = ret if oy == BUY else -ret
+                richtig = 1 if gut > schwelle else (0 if gut < -schwelle else None)
+                with self._lock, self._conn() as c:
+                    c.execute(f"UPDATE stimmen SET rendite_{h}=?, richtig_{h}=? WHERE id=?", (round(ret, 3), richtig, sid))
+                n += 1
+        return n
+
+    def bilanz(self, horizont=""):
+        """{mitglied: (richtig, falsch)} - v16.1 FAIR: eine Bewertung je Mitglied, Markt-Gruppe und Tag.
+        Stimmt ein Mitglied an einem Tag bei 18 Altcoins dieselbe Richtung, ist das EINE Einschaetzung
+        ("Krypto faellt"), nicht 18. Je Zelle zaehlt die Mehrheit seiner richtig/falsch-Stimmen.
+        horizont: "" = 24 h, "3t" = 3 Tage, "7t" = 7 Tage."""
+        sp = f"richtig_{horizont}" if horizont else "richtig"
         with self._conn() as c:
-            rows = c.execute("SELECT mitglied, SUM(richtig=1), SUM(richtig=0) FROM stimmen "
-                             "WHERE bewertet=1 AND richtig IS NOT NULL GROUP BY mitglied").fetchall()
-        return {m: (int(r or 0), int(f or 0)) for m, r, f in rows}
+            rows = c.execute(f"SELECT mitglied, sym, ts, {sp} FROM stimmen WHERE {sp} IS NOT NULL").fetchall()
+        zellen = {}
+        for m, sym, ts, ri in rows:
+            k = (m, self.gruppe(sym), time.strftime("%Y-%m-%d", time.localtime(ts)))
+            zellen[k] = zellen.get(k, 0) + (1 if ri == 1 else -1)
+        out = {}
+        for (m, _g, _t), v in zellen.items():
+            r, f = out.get(m, (0, 0))
+            out[m] = (r + (v > 0), f + (v < 0))
+        return out
 
     def gewichte(self, ids=None):
         """Glaubwuerdigkeit 0.5 ... 1.5. Ohne Bilanz 1.0; Startwert zaehlt wie 10 Stimmen
@@ -706,7 +781,7 @@ class Gedaechtnis:
 _TXT = {
     "de": {"titel": "🏛️ GREMIUM: {sym}", "kurs": "Kurs {kurs} | Technik Tag: {tech}",
            "stimmen": "Stimmen", "keine": "keine Antwort", "skip": "nicht gefragt (Quorum schon verfehlt)", "gew": "Gewichtet: BUY {b} · SELL {s} · BEKLE {w} (Mehrheit ab {m}, Antworten {a}/{n})",
-           "beschluss": "✅ Beschluss: {r}", "vorsitz_ok": "👔 Vorsitz: ausführen", "vorsitz_stop": "👔 Vorsitz: gestoppt",
+           "lern": "🧪 Lernmodus (Demo): Richtung ≥ {r} Köpfe, Gegenstimmen ≤ {g}, BEKLE = Enthaltung | BUY {b} · SELL {s}", "beschluss": "✅ Beschluss: {r}", "vorsitz_ok": "👔 Vorsitz: ausführen", "vorsitz_stop": "👔 Vorsitz: gestoppt",
            "vorsitz_fehl": "👔 Vorsitz: keine Antwort - kein Trade",
            "beschlussunfaehig": "⏸️ Nicht beschlussfähig: nur {a} von {n} Antworten (mindestens {min})",
            "konflikt": "⏸️ Kein Trade: Gremium gespalten ({b}× BUY, {s}× SELL) - Senaryo 4",
@@ -715,6 +790,7 @@ _TXT = {
            "w_zeile": "{name}: Gewicht {g} | richtig {r} / falsch {f}",
            "w_leer": "Noch keine bewerteten Stimmen - alle Gewichte 1.0.",
            "b_kopf": "Letzte Beschlüsse:",
+           "w_fair": "Gezählt je Mitglied, Markt-Gruppe und Tag (ein Krypto-Tag = eine Einschätzung). 3T/7T = richtig/falsch nach 3 und 7 Tagen.",
            "s_kopf": "🏛️ NEXUS STATUS (Gremium entscheidet) | {zeit}",
            "s_konto": "Konto: {gesamt} EUR | verfügbar {frei} EUR | offen {upl} EUR | Positionen {npos}",
            "s_beschl": "Gremiumsbeschlüsse der letzten {std} h:",
@@ -726,7 +802,7 @@ _TXT = {
            "budget": "🏛️ GREMIUM: {sym} nicht beraten - KI-Budget fast aufgebraucht ({n}/{max} Aufrufe in der letzten Stunde, je Markt nötig: {need}). Nächster Versuch beim nächsten Scan."},
     "en": {"titel": "🏛️ COMMITTEE: {sym}", "kurs": "Price {kurs} | Daily technicals: {tech}",
            "stimmen": "Votes", "keine": "no answer", "skip": "not asked (quorum already missed)", "gew": "Weighted: BUY {b} · SELL {s} · WAIT {w} (majority from {m}, answers {a}/{n})",
-           "beschluss": "✅ Decision: {r}", "vorsitz_ok": "👔 Chair: execute", "vorsitz_stop": "👔 Chair: stopped",
+           "lern": "🧪 Learning mode (demo): direction ≥ {r} heads, opposing ≤ {g}, WAIT = abstention | BUY {b} · SELL {s}", "beschluss": "✅ Decision: {r}", "vorsitz_ok": "👔 Chair: execute", "vorsitz_stop": "👔 Chair: stopped",
            "vorsitz_fehl": "👔 Chair: no answer - no trade",
            "beschlussunfaehig": "⏸️ No quorum: only {a} of {n} answers (at least {min})",
            "konflikt": "⏸️ No trade: committee split ({b}× BUY, {s}× SELL) - scenario 4",
@@ -735,6 +811,7 @@ _TXT = {
            "w_zeile": "{name}: weight {g} | right {r} / wrong {f}",
            "w_leer": "No rated votes yet - all weights 1.0.",
            "b_kopf": "Latest decisions:",
+           "w_fair": "Counted per member, market group and day (one crypto day = one call). 3T/7T = right/wrong after 3 and 7 days.",
            "s_kopf": "🏛️ NEXUS STATUS (the committee decides) | {zeit}",
            "s_konto": "Account: {gesamt} EUR | available {frei} EUR | open {upl} EUR | positions {npos}",
            "s_beschl": "Committee decisions in the last {std} h:",
@@ -746,7 +823,7 @@ _TXT = {
            "budget": "🏛️ COMMITTEE: {sym} not discussed - AI budget almost used up ({n}/{max} calls in the last hour, needed per market: {need}). Next try at the next scan."},
     "tr": {"titel": "🏛️ KURUL: {sym}", "kurs": "Fiyat {kurs} | Günlük teknik: {tech}",
            "stimmen": "Oylar", "keine": "yanıt yok", "skip": "sorulmadı (yeter sayı zaten tutmuyor)", "gew": "Ağırlıklı: BUY {b} · SELL {s} · BEKLE {w} (çoğunluk {m}, yanıt {a}/{n})",
-           "beschluss": "✅ Karar: {r}", "vorsitz_ok": "👔 Başkan: uygula", "vorsitz_stop": "👔 Başkan: durdurdu",
+           "lern": "🧪 Öğrenme modu (demo): yön ≥ {r} kişi, karşı oy ≤ {g}, BEKLE = çekimser | BUY {b} · SELL {s}", "beschluss": "✅ Karar: {r}", "vorsitz_ok": "👔 Başkan: uygula", "vorsitz_stop": "👔 Başkan: durdurdu",
            "vorsitz_fehl": "👔 Başkan: yanıt yok - işlem yok",
            "beschlussunfaehig": "⏸️ Karar yeter sayısı yok: {n} üyeden yalnızca {a} yanıt (en az {min})",
            "konflikt": "⏸️ İşlem yok: kurul bölündü ({b}× BUY, {s}× SELL) - Senaryo 4",
@@ -755,6 +832,7 @@ _TXT = {
            "w_zeile": "{name}: ağırlık {g} | doğru {r} / yanlış {f}",
            "w_leer": "Henüz değerlendirilmiş oy yok - tüm ağırlıklar 1.0.",
            "b_kopf": "Son kararlar:",
+           "w_fair": "Üye, piyasa grubu ve gün başına sayılır (bir kripto günü = tek görüş). 3T/7T = 3 ve 7 gün sonra doğru/yanlış.",
            "s_kopf": "🏛️ NEXUS DURUM (kararı kurul verir) | {zeit}",
            "s_konto": "Hesap: {gesamt} EUR | kullanılabilir {frei} EUR | açık {upl} EUR | pozisyon {npos}",
            "s_beschl": "Son {std} saatin kurul kararları:",
@@ -788,6 +866,9 @@ def bericht(sym, stimmen, ergebnis, vorsitz_erg=None, lang="tr", kurs=0, tech=""
     g = ergebnis["gewicht"]
     z += ["", T["gew"].format(b="%.1f" % g[BUY], s="%.1f" % g[SELL], w="%.1f" % g[BEKLE],
                               m="%.1f" % ergebnis["mehrheit"], a=ergebnis["antworten"], n=ergebnis["mitglieder"])]
+    if ergebnis.get("regel") == "lern":
+        z.append(T["lern"].format(r=ergebnis.get("lern_r", "?"), g=ergebnis.get("lern_g", "?"),
+                                  b=ergebnis["anzahl"][BUY], s=ergebnis["anzahl"][SELL]))
     if ergebnis["richtung"]:
         z.append(T["beschluss"].format(r=ergebnis["richtung"]))
         if vorsitz_erg is not None:
@@ -844,16 +925,25 @@ def budget_zeile(sym, n, maxi, need, lang="tr"):
     return _t(lang)["budget"].format(sym=sym, n=n, max=maxi, need=need)
 
 
-def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
+def gewichte_bericht(gd, lang="tr", std=24, letzte=8, regel=""):
     T = _t(lang)
-    z = [T["w_kopf"].format(std=int(std) if float(std).is_integer() else std), ""]
+    z = [T["w_kopf"].format(std=int(std) if float(std).is_integer() else std)]
+    if regel:
+        z.append(regel)
+    z += [T["w_fair"], ""]
     b = gd.bilanz()
+    b3, b7 = gd.bilanz("3t"), gd.bilanz("7t")
     gw = gd.gewichte()
     if not b:
         z.append(T["w_leer"])
     for m in MITGLIEDER:
         r, f = b.get(m["id"], (0, 0))
-        z.append(T["w_zeile"].format(name=m["name"], g="%.2f" % gw[m["id"]], r=r, f=f))
+        zeile = T["w_zeile"].format(name=m["name"], g="%.2f" % gw[m["id"]], r=r, f=f)
+        r3, f3 = b3.get(m["id"], (0, 0))
+        r7, f7 = b7.get(m["id"], (0, 0))
+        if r3 + f3 or r7 + f7:
+            zeile += " | 3T %d/%d · 7T %d/%d" % (r3, f3, r7, f7)
+        z.append(zeile)
     with gd._conn() as c:
         rows = c.execute("SELECT ts, sym, richtung, karar, grund FROM beschluesse ORDER BY ts DESC LIMIT ?",
                          (int(letzte),)).fetchall()
@@ -869,7 +959,7 @@ def gewichte_bericht(gd, lang="tr", std=24, letzte=8):
 # Rollenkarten als Dokument
 # ---------------------------------------------------------------------------
 def doku():
-    z = ["# NEXUS Gremium – Rollenkarten (v16.0.4)", "",
+    z = ["# NEXUS Gremium – Rollenkarten (v16.1)", "",
          "Diese Datei wird aus `nexus_gremium.py` erzeugt (`python3 nexus_gremium.py --doku > docs/GREMIUM.md`). "
          "Genau dieser Text geht als Anweisung an die KI. Wer eine Karte ändern will, ändert `MITGLIEDER` in "
          "`nexus_gremium.py` und erzeugt die Datei neu.", "",
