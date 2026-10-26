@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.0.4"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -946,6 +946,16 @@ CLAUDE_CLI             = (os.getenv("CLAUDE_CLI", "claude").split("#")[0].strip(
 CLAUDE_MODELL_ENV      = (os.getenv("CLAUDE_MODELL", "sonnet").split("#")[0].strip() or "sonnet")
 CLAUDE_MODELL          = "sonnet" if "haiku" in CLAUDE_MODELL_ENV.lower() else CLAUDE_MODELL_ENV  # mindestens Sonnet
 CLAUDE_TIMEOUT         = _env_zahl("CLAUDE_TIMEOUT", 180, int)
+# v16.1: Lernmodus (nur Demo-Konto): BEKLE = Enthaltung; Beschluss bei >= GREMIUM_LERN_RICHTUNG Koepfen
+# fuer eine Richtung und <= GREMIUM_LERN_GEGEN Gegenstimmen. Auf einem echten Konto gilt immer die Mehrheit.
+GREMIUM_REGEL          = (os.getenv("GREMIUM_REGEL", "mehrheit").split("#")[0].strip().lower() or "mehrheit")
+GREMIUM_LERN_RICHTUNG  = _env_zahl("GREMIUM_LERN_RICHTUNG", 3, int)
+GREMIUM_LERN_GEGEN     = _env_zahl("GREMIUM_LERN_GEGEN", 1, int)
+# v16.1: Krypto nur diese Maerkte (Auswertung 25.10.: Altcoins 19-29 % Treffer, alte und neue Version);
+# "alle" = keine Einschraenkung. Offene Positionen in anderen Kryptos duerfen weiter geschlossen werden.
+_KRYPTO_ERLAUBT_ENV    = os.getenv("KRYPTO_ERLAUBT", "BTC_USD,BTC_EUR,ETH_USD,ETH_EUR").split("#")[0].strip()
+KRYPTO_ERLAUBT         = None if _KRYPTO_ERLAUBT_ENV.lower() in ("alle", "all", "*", "") else \
+                         {x.strip().upper() for x in _KRYPTO_ERLAUBT_ENV.split(",") if x.strip()}
 # v16.0.2: Kontrolle wie in swarm.py (AIBudgetTracker) + Pause fuer Anbieter, die gerade nicht antworten
 KI_BUDGET_STUNDE       = _env_zahl("KI_BUDGET_STUNDE", 120, int)   # KI-Aufrufe je Stunde hoechstens (0 = ohne Grenze)
 KI_PAUSE_MIN           = _env_zahl("KI_PAUSE_MIN", 15)             # Anbieter nach 2 Fehlschlaegen in Folge so viele Minuten auslassen (0 = aus)
@@ -9369,6 +9379,10 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
                        f"Wiedereinstieg gesperrt, noch {int(_rest_s // 3600)} h {int(_rest_s % 3600 // 60)} min "
                        f"(WIEDEREINSTIEG_SPERRE_STD={WIEDEREINSTIEG_SPERRE_STD:g})")
                 results.append(msg); logging.info(msg); continue
+        if not epic_positions and not krypto_erlaubt(sym):
+            # v16.1: gilt in beiden Modi (Gremium und alter Ablauf) - nur Neueinstiege
+            msg = f"⛔ {sym}: Krypto nur {', '.join(sorted(KRYPTO_ERLAUBT))} (KRYPTO_ERLAUBT) - nicht eröffnet"
+            results.append(msg); logging.info(msg); continue
         if not epic_positions:
             _offen_pos = get_positions(h) or []
             _offen_n = len(_offen_pos)
@@ -10102,6 +10116,24 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
     return "\n".join(z), info
 
 
+def gremium_lernmodus():
+    """v16.1: Lernmodus nur auf dem Demo-Konto - auf einem echten Konto gilt immer die strenge Mehrheit."""
+    return GREMIUM_REGEL in ("lern", "lernen", "enthaltung") and "demo" in (CAPITAL_URL or "").lower()
+
+
+def gremium_regel_text():
+    if gremium_lernmodus():
+        return (f"🧪 Lernmodus (Demo): Richtung ≥ {GREMIUM_LERN_RICHTUNG} Köpfe, Gegenstimmen ≤ {GREMIUM_LERN_GEGEN}, "
+                f"BEKLE = Enthaltung, Vorsitz prüft")
+    if GREMIUM_REGEL in ("lern", "lernen", "enthaltung"):
+        return "⚠️ GREMIUM_REGEL=lern gilt nur auf dem Demo-Konto - hier gilt die Mehrheit"
+    return f"Regel: Mehrheit {GREMIUM_MEHRHEIT:g}/11 (Krypto am Wochenende {GREMIUM_MEHRHEIT_KRYPTO:g}/11)"
+
+
+def krypto_erlaubt(sym):
+    return KRYPTO_ERLAUBT is None or not is_crypto(sym) or sym.upper() in KRYPTO_ERLAUBT
+
+
 def gremium_kandidaten(h, positionen):
     """Maerkte, ueber die das Gremium in diesem Scan beraet. Alle Maerkte werden angeschaut
     (vorher brach der Scan nach 15 ab). Python-Signal ist nur ein Aufmerksamkeitsfilter:
@@ -10122,6 +10154,8 @@ def gremium_kandidaten(h, positionen):
             continue
         epic = v["epic"]
         pos_dir = offen.get(epic)
+        if not pos_dir and not krypto_erlaubt(k):
+            continue                         # v16.1: keine neuen Altcoin-Positionen (KRYPTO_ERLAUBT)
         if not pos_dir:
             if voll:
                 continue
@@ -10324,7 +10358,8 @@ def gremium_zyklus():
             stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST,
                                    lang=lang, min_antworten=GREMIUM_MIN_ANTWORTEN)
             mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
-            erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN)
+            erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN,
+                                lern=(GREMIUM_LERN_RICHTUNG, GREMIUM_LERN_GEGEN) if gremium_lernmodus() else None)
             vs = None
             karar, grund = "BEKLE", erg.get("grund", "")
             if erg["richtung"]:
@@ -10385,7 +10420,8 @@ def handle_gremium(message):
         _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {'alter Modus (GREMIUM_MODUS=regeln)' if _NG else 'nexus_gremium.py fehlt'}")
         return
     try:
-        _gremium_senden(_NG.gewichte_bericht(_GD, lang=_gremium_lang(), std=GREMIUM_BEWERTUNG_STD)
+        _gremium_senden(_NG.gewichte_bericht(_GD, lang=_gremium_lang(), std=GREMIUM_BEWERTUNG_STD,
+                                             regel=gremium_regel_text())
                         + "\n\n" + ki_status_zeile())
     except Exception as e:
         _bot_send_raw(MY_CHAT_ID, f"🏛️ Gremium: {str(e)[:200]}")
@@ -10436,7 +10472,7 @@ def handle_status(message):
     alt = len(teile) > 1 and teile[1].lower() in ("alt", "old", "eski")
     if gremium_aktiv() and not alt:
         try:
-            konto, extra = None, ki_status_zeile()
+            konto, extra = None, gremium_regel_text() + "\n" + ki_status_zeile()
             h = capital_session.get_headers()
             if h:
                 acc = get_account_info(h) or {}
@@ -12417,6 +12453,9 @@ Komutlar: /help
         else:
             konfig_uyarilar.append("👔 Vorsitz: KI-Kette (GREMIUM_VORSITZ=kette)")
         konfig_uyarilar.append(f"🗳️ Gremium-Anbieter: {', '.join(GREMIUM_PROVIDER or PROVIDER_ORDER)} (ohne Ollama)")
+        konfig_uyarilar.append("🏛️ " + gremium_regel_text())
+        konfig_uyarilar.append("🪙 Krypto: " + ("alle" if KRYPTO_ERLAUBT is None else ", ".join(sorted(KRYPTO_ERLAUBT)))
+                               + " (KRYPTO_ERLAUBT)")
         if SCAN_INTERVAL_SEC < 3 * 3600:
             konfig_uyarilar.append(f"⚠️ Scan alle {SCAN_INTERVAL_SEC / 3600:g} h: das Gremium braucht je Markt 11 KI-Aufrufe - "
                                    "das Gratis-Kontingent reicht dafür nicht. Empfehlung: SCAN_INTERVAL_SEC=21600")
