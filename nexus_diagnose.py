@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "8 (fuer NEXUS v16.0)"
+VERSION = "9 (fuer NEXUS v16.1.2)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -54,6 +54,8 @@ ZEIGEN = [
     "PROVIDER_ORDER", "OLLAMA_PRIORITY", "OLLAMA_MODEL", "GEMINI_MODEL_1", "GEMINI_CHAIN_MAX",
     "GEMINI_503_PAUSE", "GEMINI_USE_INTERACTIONS_API", "MODEL_AUTOUPDATE", "MODEL_AUTOUPDATE_HOURS",
     "MODEL_AUTOUPDATE_PIN", "AI_CHAIN_MAX", "GROQ_MODEL", "QWEN_MODEL", "NVIDIA_MODEL", "CAPITAL_URL",
+    "CAPITAL_ACCOUNT_ID", "GREMIUM_REGEL", "GREMIUM_LERN_RICHTUNG", "GREMIUM_LERN_GEGEN", "KRYPTO_ERLAUBT",
+    "GREMIUM_PROVIDER", "KI_BUDGET_STUNDE", "KI_PAUSE_MIN", "GEMINI_DENK_BUDGET", "GEMINI_TIMEOUT_STIMME",
 ]
 SCHLUESSEL_LISTEN = ["GEMINI_KEYS", "GROQ_KEYS", "QWEN_KEYS", "NVIDIA_KEYS"]
 PFLICHT = ["TG_TOKEN", "MY_CHAT_ID", "CAPITAL_API_KEY", "CAPITAL_IDENTIFIER", "CAPITAL_PASSWORD"]
@@ -106,6 +108,9 @@ EREIGNISSE = [
     ("Gremium: gespalten (Senaryo 4)", "BEKLE konflikt"),
     ("Gremium: keine Mehrheit", "BEKLE keine_mehrheit"),
     ("Gremium: kein Kandidat im Scan", "GREMIUM: kein Kandidat"),
+    ("Konto: NEXUS musste zurueckwechseln", "KONTO: aktiv war"),
+    ("Konto: nicht gesichert, keine Order", "KONTO: aktives Konto nicht gesichert"),
+    ("Eigene Order mit dealId gemerkt", "EIGENE ORDER:"),
     ("KI: Claude-Vorsitz hat geantwortet", "[OK] Claude-Vorsitz"),
     ("KI: Claude-Vorsitz Fehler", "Claude-Vorsitz Fehler"),
     ("Sprache gesetzt", "Sprache gesetzt"),
@@ -481,6 +486,34 @@ def positionen_bilden(activities, offen_ids):
     return fertig
 
 
+def herkunft(positionen, bot_dir):
+    """v16.1.2: Wer hat die Position eroeffnet? NEXUS schreibt seine eigenen Deal-IDs nach
+    nexus_eigene_deals.json (Quelle gremium / regeln / manuell / hedge). Alles andere ist fremd
+    (Hand in der App oder ein anderes Programm wie das Board). Positionen vor dem ersten Eintrag
+    lassen sich nicht zuordnen."""
+    datei = Path(bot_dir) / "nexus_eigene_deals.json"
+    try:
+        deals = json.loads(datei.read_text(encoding="utf-8"))
+    except Exception:
+        deals = {}
+    erste = None
+    for v in deals.values():
+        try:
+            t = datetime.strptime(v.get("ts", ""), "%Y-%m-%d %H:%M:%S")
+            erste = t if erste is None or t < erste else erste
+        except Exception:
+            pass
+    for p in positionen:
+        d = deals.get(p["id"])
+        if d:
+            p["von"] = "NEXUS-" + str(d.get("quelle") or "?")
+        elif erste is None or p["open"] is None or lokal(p["open"]).replace(tzinfo=None) < erste:
+            p["von"] = "unbekannt"
+        else:
+            p["von"] = "fremd"
+    return bool(deals), erste
+
+
 def buchungen_zuordnen(positionen, trades):
     """Jede TRADE-Buchung ihrer Position zuordnen: ueber die dealId der Buchung, sonst ueber
     Epic und Zeit (kurz nach einem Teilverkauf oder einer Schliessung)."""
@@ -566,6 +599,25 @@ def teil2(env, days):
         print("  Login fehlgeschlagen: HTTP %s %s" % (r.status_code, mask(r.text)[:150]))
         return None
     h = {"X-CAP-API-KEY": key, "CST": r.headers.get("CST"), "X-SECURITY-TOKEN": r.headers.get("X-SECURITY-TOKEN")}
+    # v16.1.2: Die Historie liefert Capital.com immer fuer das AKTIVE Konto. Ist CAPITAL_ACCOUNT_ID gesetzt,
+    # wird auf das NEXUS-Konto gestellt (dasselbe tut NEXUS vor jeder Order) - sonst kaeme ein fremdes Konto.
+    soll = (env.get("CAPITAL_ACCOUNT_ID") or "").strip()
+    try:
+        aktiv = str((r.json() or {}).get("currentAccountId") or "")
+    except Exception:
+        aktiv = ""
+    if soll and aktiv != soll:
+        try:
+            w = requests.put(url + "/session", json={"accountId": soll}, headers=h, timeout=15)
+            ok = w.status_code == 200 or "not-different" in w.text
+            print("  Konto: aktiv war %s -> auf %s gestellt%s" % (aktiv or "?", soll, "" if ok else " (FEHLGESCHLAGEN: HTTP %s)" % w.status_code))
+            if ok:
+                aktiv = soll
+        except Exception as e:
+            print("  Konto: Wechsel auf %s fehlgeschlagen: %s" % (soll, mask(str(e))[:120]))
+    K["konto_id"] = (aktiv, soll)
+    if not soll:
+        print("  HINWEIS: CAPITAL_ACCOUNT_ID fehlt in .env - Teil 2 zeigt das gerade aktive Konto (%s)" % (aktiv or "?"))
 
     def get(path, params=None):
         for versuch in (1, 2):
@@ -586,13 +638,15 @@ def teil2(env, days):
     if "_error" in acc:
         print("  Konto nicht lesbar: %s" % acc["_error"])
     else:
-        for a in acc.get("accounts", []):
-            if a.get("preferred") or len(acc.get("accounts", [])) == 1:
+        _konten = acc.get("accounts", [])
+        _id = K.get("konto_id", ("", ""))[0]
+        for a in _konten:
+            if (str(a.get("accountId")) == _id) if _id else (a.get("preferred") or len(_konten) == 1):
                 b = a.get("balance") or {}
                 K["konto"] = (konto_art(url), zahl(b.get("balance")), zahl(b.get("available")), zahl(b.get("profitLoss")), a.get("currency", ""))
-                print("  Konto (%s): Kontostand %.2f | verfuegbar %.2f | offener Gewinn/Verlust %+.2f %s" % (
-                    konto_art(url), zahl(b.get("balance")), zahl(b.get("available")),
-                    zahl(b.get("profitLoss")), a.get("currency", "")))
+                print("  Konto (%s) %s (%s): Kontostand %.2f | verfuegbar %.2f | offener Gewinn/Verlust %+.2f %s" % (
+                    konto_art(url), a.get("accountName", ""), a.get("accountId", ""), zahl(b.get("balance")),
+                    zahl(b.get("available")), zahl(b.get("profitLoss")), a.get("currency", "")))
     pref = get("/accounts/preferences")
     if "_error" not in pref:
         print("  Hedging-Modus: %s" % ("AN  -> Teilverkaeufe (Mirror-TP) gehen so NICHT" if pref.get("hedgingMode")
@@ -681,6 +735,7 @@ def teil2(env, days):
     # ---- Kennzahlen: je Buchung und je Position --------------------------------------
     positionen = positionen_bilden(akt, offen_ids)
     ohne = buchungen_zuordnen(positionen, trades)
+    mit_liste, erste = herkunft(positionen, K.get("bot_dir", "."))
     zu = [p for p in positionen if p["close"] is not None and p["buchungen"] > 0]
     frueher = [p for p in zu if p["open"] is None]
     print("\n  ERGEBNIS (EUR laut Buchungen)")
@@ -746,12 +801,30 @@ def teil2(env, days):
         print("    %-44s %3d Positionen | Summe %+7.2f | Schnitt %+6.2f | mittlere Haltedauer %s" % (
             g, len(ps), sum(p["summe"] for p in ps), sum(p["summe"] for p in ps) / len(ps), halten))
 
+    # ---- Wer hat eroeffnet? (v16.1.2) --------------------------------------------------
+    print("\n  WER HAT ERÖFFNET?  (NEXUS = eigene Order laut nexus_eigene_deals.json; fremd = Hand oder anderes Programm)")
+    if not mit_liste:
+        print("    noch keine eigenen Deal-IDs gespeichert (gibt es ab NEXUS v16.1.2) - alles 'unbekannt'")
+    else:
+        print("    Aufzeichnung seit %s; aeltere Positionen: 'unbekannt'" % erste.strftime("%d.%m. %H:%M"))
+    von_sum = defaultdict(lambda: [0, 0, 0.0])
+    for p in positionen:
+        e = von_sum[p.get("von", "unbekannt")]
+        e[0] += 1
+        if p["close"] is not None and p["buchungen"] > 0:
+            e[1] += 1
+            e[2] += p["summe"]
+    K["herkunft"] = {k: tuple(v) for k, v in von_sum.items()}
+    for von, (n, nz, summe) in sorted(von_sum.items()):
+        print("    %-16s %3d Positionen | davon geschlossen %3d | Ergebnis %+8.2f EUR" % (von, n, nz, summe))
+
     # ---- Liste der Positionen ---------------------------------------------------------
     print("\n  POSITIONEN (letzte %d von %d; Zeiten in Ortszeit)" % (min(40, len(positionen)), len(positionen)))
-    print("    eroeffnet     Symbol         Richt.  Groesse    Einstieg    Teilverk.  geschlossen      durch   Haltedauer   Ergebnis EUR   (davor = vor dem Zeitraum eroeffnet)")
+    print("    eroeffnet     von              Symbol         Richt.  Groesse    Einstieg    Teilverk.  geschlossen      durch   Haltedauer   Ergebnis EUR   (davor = vor dem Zeitraum eroeffnet)")
     for p in positionen[-40:]:
-        print("    %-12s  %-14s %-5s %9s  %10g  %9d  %-15s  %-6s  %-11s  %s" % (
-            lokal(p["open"]).strftime("%d.%m. %H:%M") if p["open"] else "davor", p["epic"][:14], p["dir"],
+        print("    %-12s  %-15s  %-14s %-5s %9s  %10g  %9d  %-15s  %-6s  %-11s  %s" % (
+            lokal(p["open"]).strftime("%d.%m. %H:%M") if p["open"] else "davor", p.get("von", "unbekannt"),
+            p["epic"][:14], p["dir"],
             ("%g" % p["groesse"]) if p["groesse"] is not None else "?", p["einstieg"],
             max(0, p["teile"] - (1 if p["close"] else 0)),
             lokal(p["close"]).strftime("%d.%m. %H:%M") if p["close"] else "noch offen",
@@ -847,7 +920,7 @@ TEXTE = {
            "s_max": "Max. Positionen", "s_verlust": "Verluste", "s_spread": "Spread", "s_dd": "Tages-Stopp",
            "dreh2": "Gegensignale: {0} · Position geschlossen: {1} · Gegenposition entstanden: {2}", "ki": "KI ({0} Tage): Gemini {1} · Ersatzbetrieb {2} · alle Anbieter ausgefallen {3} · Modell ersetzt {4}", "fehler": "Fehler im Log: {0} · nicht übersetzte Texte: {1}",
            "kein_log": "Kein Log im Zeitraum.", "kein_api": "Capital.com: keine Daten.", "api_fehler": "Capital.com: {0} Abfragen fehlgeschlagen.",
-           "gremium": "Gremium ({0} Tage): beraten {1} · ausgeführt {2} · Vorsitz gestoppt {3} · nicht beschlussfähig {4} · gespalten {5} · keine Mehrheit {6} · Claude ok {7} / Fehler {8}",
+           "herkunft": "Eröffnet von", "gremium": "Gremium ({0} Tage): beraten {1} · ausgeführt {2} · Vorsitz gestoppt {3} · nicht beschlussfähig {4} · gespalten {5} · keine Mehrheit {6} · Claude ok {7} / Fehler {8}",
            "keine": "keine"},
     "en": {"kopf": "🔎 NEXUS diagnosis · {0} days", "stand": "Version: {0}", "dienst": "Service: {0}, restarts: {1}", "sprache": "Language: {0}",
            "konto": "Account ({0}): {1:.2f} {4} · available {2:.2f} · open {3:+.2f}", "offen": "Open positions: {0}",
@@ -861,7 +934,7 @@ TEXTE = {
            "s_max": "max positions", "s_verlust": "losses", "s_spread": "spread", "s_dd": "daily stop",
            "dreh2": "Opposite signals: {0} · position closed: {1} · opposite position created: {2}", "ki": "AI ({0} days): Gemini {1} · fallback mode {2} · all providers failed {3} · model replaced {4}", "fehler": "Errors in the log: {0} · untranslated texts: {1}",
            "kein_log": "No log in this period.", "kein_api": "Capital.com: no data.", "api_fehler": "Capital.com: {0} requests failed.",
-           "gremium": "Committee ({0} days): discussed {1} · executed {2} · chair stopped {3} · no quorum {4} · split {5} · no majority {6} · Claude ok {7} / errors {8}",
+           "herkunft": "Opened by", "gremium": "Committee ({0} days): discussed {1} · executed {2} · chair stopped {3} · no quorum {4} · split {5} · no majority {6} · Claude ok {7} / errors {8}",
            "keine": "none"},
     "tr": {"kopf": "🔎 NEXUS teşhisi · {0} gün", "stand": "Sürüm: {0}", "dienst": "Servis: {0}, yeniden başlatma: {1}", "sprache": "Dil: {0}",
            "konto": "Hesap ({0}): {1:.2f} {4} · müsait {2:.2f} · açık {3:+.2f}", "offen": "Açık pozisyon: {0}",
@@ -875,7 +948,7 @@ TEXTE = {
            "s_max": "maks. pozisyon", "s_verlust": "kayıp", "s_spread": "spread", "s_dd": "günlük durdurma",
            "dreh2": "Karşı sinyal: {0} · pozisyon kapatıldı: {1} · karşı pozisyon oluştu: {2}", "ki": "Yapay zekâ ({0} gün): Gemini {1} · yedek mod {2} · tüm sağlayıcılar başarısız {3} · model değiştirildi {4}", "fehler": "Log'da hata: {0} · çevrilmemiş metin: {1}",
            "kein_log": "Bu dönemde log yok.", "kein_api": "Capital.com: veri yok.", "api_fehler": "Capital.com: {0} sorgu başarısız.",
-           "gremium": "Kurul ({0} gün): görüşüldü {1} · uygulandı {2} · başkan durdurdu {3} · yeter sayı yok {4} · bölündü {5} · çoğunluk yok {6} · Claude tamam {7} / hata {8}",
+           "herkunft": "Açan", "gremium": "Kurul ({0} gün): görüşüldü {1} · uygulandı {2} · başkan durdurdu {3} · yeter sayı yok {4} · bölündü {5} · çoğunluk yok {6} · Claude tamam {7} / hata {8}",
            "keine": "yok"},
 }
 
@@ -915,6 +988,8 @@ def kurzfassung(lang, days, mit_api):
         if K.get("grund"):
             z.append(T["grund"] + ": " + " · ".join("%s %d (%+.2f)" % (T.get(g, "%s %s" % (T["broker"], g)), n, summe)
                                                      for g, n, summe in K["grund"]))
+        if K.get("herkunft"):
+            z.append(T["herkunft"] + ": " + " · ".join("%s %d (%+.2f)" % (k, v[0], v[2]) for k, v in sorted(K["herkunft"].items())))
         if "wieder" in K:
             z.append(T["wieder"].format(*K["wieder"]))
         if "drehen" in K:

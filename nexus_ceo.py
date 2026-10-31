@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1.1"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1.2"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -6247,45 +6247,149 @@ def sync_pyramiding_from_capital():
 # ============================================================
 # CAPITAL.COM HELPERS (SESSION CACHING)
 # ============================================================
+# v16.1.2 KONTO FESTNAGELN: Bei Capital.com haengt das aktive Unterkonto am Login. Wechselt ein anderes
+# Programm mit denselben Zugangsdaten (z. B. das Board) auf sein Konto, landete NEXUS dort. Mit
+# CAPITAL_ACCOUNT_ID prueft NEXUS nach jedem Login, alle KONTO_PRUEF_SEK und vor jeder Order das aktive
+# Konto und wechselt zurueck. Klappt das nicht, gibt es keine Kopfzeilen -> keine Order, keine Aenderung.
+CAPITAL_ACCOUNT_ID = os.getenv("CAPITAL_ACCOUNT_ID", "").split("#")[0].strip()
+KONTO_PRUEF_SEK    = 20
+
+
 class CapitalSession:
     def __init__(self):
         self.cst = None
         self.token = None
         self.expires = 0
         self.lock = threading.Lock()
+        self.konto_ok_bis = 0.0
+        self.konto_meldung = 0.0
+        self.konto_wechsel = 0          # wie oft NEXUS zurueckwechseln musste (fuer /status und Diagnose)
 
-    def get_headers(self):
+    def _kopf(self):
+        return {"X-CAP-API-KEY": CAP_KEY, "CST": self.cst, "X-SECURITY-TOKEN": self.token,
+                "Content-Type": "application/json"}
+
+    def _melden(self, text):
+        """Telegram hoechstens einmal je Stunde (Konto-Probleme koennen sich sekundenweise wiederholen)."""
+        if time.time() - self.konto_meldung < 3600:
+            return
+        self.konto_meldung = time.time()
+        try:
+            bot.send_message(MY_CHAT_ID, text)
+        except Exception:
+            pass
+
+    def _konto_sichern(self, h):
+        """True, wenn das aktive Konto CAPITAL_ACCOUNT_ID ist (notfalls nach Zurueckwechseln)."""
+        try:
+            r = requests.get(f"{CAPITAL_URL}/session", headers=h, timeout=10)
+            if r.status_code != 200:
+                raise ValueError(f"Session lesen: HTTP {r.status_code}")
+            aktiv = str(r.json().get("accountId") or "")
+            if aktiv == CAPITAL_ACCOUNT_ID:
+                return True
+            w = requests.put(f"{CAPITAL_URL}/session", json={"accountId": CAPITAL_ACCOUNT_ID}, headers=h, timeout=10)
+            if w.status_code != 200 and "not-different" not in w.text:
+                raise ValueError(f"Wechsel abgelehnt: HTTP {w.status_code} {w.text[:120]}")
+            r2 = requests.get(f"{CAPITAL_URL}/session", headers=h, timeout=10)
+            neu = str(r2.json().get("accountId") or "") if r2.status_code == 200 else ""
+            if neu != CAPITAL_ACCOUNT_ID:
+                raise ValueError(f"nach dem Wechsel aktiv: {neu or '?'}")
+            self.konto_wechsel += 1
+            logging.warning(f"KONTO: aktiv war {aktiv}, zurueckgewechselt auf {CAPITAL_ACCOUNT_ID} "
+                            f"(ein anderes Programm mit denselben Zugangsdaten hatte gewechselt)")
+            self._melden(f"🔁 Konto: Capital.com stand auf {aktiv} - NEXUS ist auf sein Konto "
+                         f"{CAPITAL_ACCOUNT_ID} zurückgewechselt.")
+            return True
+        except Exception as e:
+            logging.error(f"KONTO: aktives Konto nicht gesichert ({e}) - keine Order, bis es wieder stimmt")
+            self._melden(f"⛔ Konto: NEXUS kann nicht sicherstellen, dass es im Konto {CAPITAL_ACCOUNT_ID} "
+                         f"handelt ({str(e)[:120]}). Bis das klappt, eröffnet und ändert NEXUS nichts.")
+            return False
+
+    def get_headers(self, konto_pruefen=False):
+        """konto_pruefen=True: Konto JETZT pruefen (vor einer Order), sonst hoechstens alle KONTO_PRUEF_SEK."""
         with self.lock:
-            if time.time() < self.expires and self.cst:
-                return {
-                    "X-CAP-API-KEY": CAP_KEY,
-                    "CST": self.cst,
-                    "X-SECURITY-TOKEN": self.token,
-                    "Content-Type": "application/json"
-                }
-            try:
-                r = requests.post(
-                    f"{CAPITAL_URL}/session",
-                    json={"identifier": CAP_ID, "password": CAP_PW},
-                    headers={"X-CAP-API-KEY": CAP_KEY},
-                    timeout=15
-                )
-                if r.status_code == 200:
-                    self.cst = r.headers.get("CST")
-                    self.token = r.headers.get("X-SECURITY-TOKEN")
-                    self.expires = time.time() + 1200
-                    logging.info("✅ Neue Session erstellt")
-                    return {
-                        "X-CAP-API-KEY": CAP_KEY,
-                        "CST": self.cst,
-                        "X-SECURITY-TOKEN": self.token,
-                        "Content-Type": "application/json"
-                    }
-            except Exception as e:
-                logging.error(f"Session hatasi: {e}")
-            return None
+            h = self._kopf() if (time.time() < self.expires and self.cst) else self._login()
+            if h is None:
+                return None
+            if CAPITAL_ACCOUNT_ID and (konto_pruefen or time.time() >= self.konto_ok_bis):
+                if not self._konto_sichern(h):
+                    self.konto_ok_bis = 0.0
+                    return None
+                self.konto_ok_bis = time.time() + KONTO_PRUEF_SEK
+            return h
+
+    def _login(self):
+        try:
+            r = requests.post(
+                f"{CAPITAL_URL}/session",
+                json={"identifier": CAP_ID, "password": CAP_PW},
+                headers={"X-CAP-API-KEY": CAP_KEY},
+                timeout=15
+            )
+            if r.status_code == 200:
+                self.cst = r.headers.get("CST")
+                self.token = r.headers.get("X-SECURITY-TOKEN")
+                self.expires = time.time() + 1200
+                self.konto_ok_bis = 0.0          # neue Session: Konto sofort pruefen
+                logging.info("✅ Neue Session erstellt")
+                return self._kopf()
+        except Exception as e:
+            logging.error(f"Session hatasi: {e}")
+        return None
 
 capital_session = CapitalSession()
+
+
+def konto_vor_order():
+    """v16.1.2: direkt vor jeder Order das Konto pruefen. False = nicht handeln."""
+    if not CAPITAL_ACCOUNT_ID:
+        return True
+    return capital_session.get_headers(konto_pruefen=True) is not None
+
+
+# v16.1.2 WER HAT WAS ERÖFFNET: NEXUS merkt sich die Deal-IDs seiner eigenen Orders (Quelle: gremium,
+# regeln, manuell, hedge). Die Diagnose ordnet damit jede Position zu: NEXUS oder fremd (Hand/Board).
+_EIGENE_DEALS_DATEI = os.path.join(BASE_DIR, "nexus_eigene_deals.json")
+_eigene_lock = threading.Lock()
+
+
+def eigene_deal_merken(h, antwort, sym, richtung, quelle):
+    """antwort = Response der POST /positions. Holt die dealId ueber /confirms und speichert sie."""
+    try:
+        ref = (antwort.json() or {}).get("dealReference")
+    except Exception:
+        ref = None
+    ids = []
+    if ref:
+        try:
+            cf = requests.get(f"{CAPITAL_URL}/confirms/{ref}", headers=h, timeout=10)
+            if cf.status_code == 200:
+                j = cf.json() or {}
+                ids = [d.get("dealId") for d in (j.get("affectedDeals") or []) if d.get("dealId")]
+                if j.get("dealId") and j["dealId"] not in ids:
+                    ids.append(j["dealId"])
+        except Exception as e:
+            logging.debug(f"Eigene Deals confirm {ref}: {e}")
+    eintrag = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sym": sym, "richtung": richtung,
+               "quelle": quelle, "ref": ref, "konto": CAPITAL_ACCOUNT_ID or ""}
+    with _eigene_lock:
+        try:
+            with open(_EIGENE_DEALS_DATEI, encoding="utf-8") as f:
+                daten = json.load(f)
+        except Exception:
+            daten = {}
+        for did in ids or ["ref:" + str(ref)]:
+            daten[did] = eintrag
+        try:
+            tmp = _EIGENE_DEALS_DATEI + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(daten, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, _EIGENE_DEALS_DATEI)
+        except Exception as e:
+            logging.warning(f"Eigene Deals speichern: {e}")
+    logging.info(f"EIGENE ORDER: {sym} {richtung} | Quelle {quelle} | dealId {', '.join(ids) or '?'} | ref {ref}")
 
 def safe_trade_size(size_eur_input, cfg, epic, is_manual=False):
     """
@@ -6924,10 +7028,15 @@ def volatilite_kontrol(h):
                             except: pass
                 elif karar == "HEDGE":
                     hedge_side = "SELL" if direction=="BUY" else "BUY"
+                    if not konto_vor_order():
+                        logging.error(f"HEDGE {instrument}: Konto nicht gesichert - keine Order")
+                        continue
                     r = requests.post(f"{CAPITAL_URL}/positions",
                         json={"epic":epic,"direction":hedge_side,
                               "size":float(p['position']['size']),"type":"MARKET"},
                         headers=h, timeout=10)
+                    if r.status_code == 200:
+                        eigene_deal_merken(h, r, sym or epic, hedge_side, "hedge")
                     if r.status_code == 200:
                         kapatilanlar.append(f"KARA_KUGU(Gemini→HEDGE) {instrument}: {hedge_side}")
                         if sym: db_gemini_write("HEDGE", f"Emergency hedge {instrument}", sym)
@@ -7135,6 +7244,9 @@ def partial_close_position(h, epic, direction, close_size):
         vor, gegen_vor = _lage()
         if vor <= 0:
             return False, 0.0, "keine offene Position gefunden"
+        if not konto_vor_order():
+            # Eine Gegen-Order im falschen Konto wuerde dort eine NEUE Position eroeffnen
+            return False, 0.0, "Konto nicht gesichert"
 
         r = requests.post(f"{CAPITAL_URL}/positions",
                           json={"epic": epic, "direction": gegen, "size": close_size},
@@ -9581,8 +9693,12 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
             "size": _units,
             "type": "MARKET", "stopLevel": sl_float, "profitLevel": tp_float
         }
+        if not konto_vor_order():
+            msg = f"⛔ {sym}: Konto {CAPITAL_ACCOUNT_ID} nicht gesichert - keine Order"
+            results.append(msg); logging.error(msg); continue
         r = requests.post(f"{CAPITAL_URL}/positions", json=payload, headers=h, timeout=10)
         if r.status_code == 200:
+            eigene_deal_merken(h, r, sym, side.upper(), "gremium" if gremium_aktiv() else "regeln")
             # v15.8: Post-Order Verifikation — wirklich offen?
             import time as _time
             _time.sleep(8)  # Capital.com braucht ~5-8 Sek bis Position erscheint
@@ -10481,6 +10597,9 @@ def handle_status(message):
     if gremium_aktiv() and not alt:
         try:
             konto, extra = None, gremium_regel_text() + "\n" + ki_status_zeile()
+            if CAPITAL_ACCOUNT_ID:
+                extra += (f"\n🏦 Konto {CAPITAL_ACCOUNT_ID}: seit dem Start {capital_session.konto_wechsel}× "
+                          f"zurückgewechselt")
             h = capital_session.get_headers()
             if h:
                 acc = get_account_info(h) or {}
@@ -11240,8 +11359,12 @@ def handle_manuell(message):
         f"TP: {tp_float}")
     
     try:
+        if not konto_vor_order():
+            bot.send_message(MY_CHAT_ID, f"⛔ Manuell {sym}: Konto {CAPITAL_ACCOUNT_ID} nicht gesichert - keine Order")
+            return
         r = requests.post(f"{CAPITAL_URL}/positions", json=payload, headers=h, timeout=10)
         if r.status_code == 200:
+            eigene_deal_merken(h, r, sym, side, "manuell")
             # Pyramiding-Stufe auf 1 setzen
             set_pyramiding_stufe(epic, 1)
             
@@ -12471,6 +12594,11 @@ Komutlar: /help
         konfig_uyarilar.append("⚠️ Gremium: nexus_gremium.py fehlt - alter Ablauf aktiv")
     else:
         konfig_uyarilar.append("🏛️ Gremium: alter Ablauf (GREMIUM_MODUS=regeln)")
+    if CAPITAL_ACCOUNT_ID:
+        konfig_uyarilar.append(f"🏦 Konto fest: {CAPITAL_ACCOUNT_ID} (wird vor jeder Order geprüft)")
+    else:
+        konfig_uyarilar.append("⚠️ CAPITAL_ACCOUNT_ID fehlt in der .env - NEXUS handelt im Konto, das Capital.com "
+                               "gerade aktiv hat (andere Programme mit denselben Zugangsdaten können es umstellen)")
     konfig_uyarilar.append(f"📊 KI-Budget: {KI_BUDGET_STUNDE if KI_BUDGET_STUNDE > 0 else 'ohne Grenze'} Aufrufe/Stunde"
                            + (f" | Anbieter-Pause nach 2 Fehlern: {KI_PAUSE_MIN:g} Min." if KI_PAUSE_MIN > 0 else ""))
     # Provider-Anzeige mit Key-Anzahl (Merge aus Qwen-Session)
