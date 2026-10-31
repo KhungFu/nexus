@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1.1"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -955,6 +955,7 @@ GREMIUM_LERN_GEGEN     = _env_zahl("GREMIUM_LERN_GEGEN", 1, int)
 # "alle" = keine Einschraenkung. Offene Positionen in anderen Kryptos duerfen weiter geschlossen werden.
 _KRYPTO_ERLAUBT_ENV    = os.getenv("KRYPTO_ERLAUBT", "BTC_USD,BTC_EUR,ETH_USD,ETH_EUR").split("#")[0].strip()
 KRYPTO_ERLAUBT         = None if _KRYPTO_ERLAUBT_ENV.lower() in ("alle", "all", "*", "") else \
+                         set() if _KRYPTO_ERLAUBT_ENV.lower() in ("keine", "none", "0", "nein", "yok") else \
                          {x.strip().upper() for x in _KRYPTO_ERLAUBT_ENV.split(",") if x.strip()}
 # v16.0.2: Kontrolle wie in swarm.py (AIBudgetTracker) + Pause fuer Anbieter, die gerade nicht antworten
 KI_BUDGET_STUNDE       = _env_zahl("KI_BUDGET_STUNDE", 120, int)   # KI-Aufrufe je Stunde hoechstens (0 = ohne Grenze)
@@ -6695,7 +6696,12 @@ def is_weekend():
 # Krypto (Gremium 3/5 statt 4/5, Wochenend-Scan, Krypto-Halbierung). Jetzt zaehlt nur das
 # Basis-Kuerzel vor _USD/_EUR bzw. vor USD/EUR im Epic. Die Liste der Coins ist dieselbe wie vorher.
 _KRYPTO_BASIS = {"BTC", "ETH", "XRP", "SOL", "LTC", "ADA", "DOT", "LINK", "DOGE", "AVAX",
-                 "MATIC", "BNB", "SHIB", "UNI", "ATOM"}
+                 "MATIC", "BNB", "SHIB", "UNI", "ATOM",
+                 # v16.1.1: fehlten - BCH, XTZ usw. galten nicht als Krypto (Altcoin-Sperre griff nicht,
+                 # am Wochenende falsch behandelt)
+                 "BCH", "XTZ", "ARB", "OP", "NEAR", "AAVE", "XLM", "ALGO", "VET", "HBAR", "IOTA", "TRX",
+                 "POL", "TON", "SUI", "APT", "FIL", "ETC", "PEPE", "WIF", "BONK", "SEI", "INJ", "TIA",
+                 "RNDR", "RENDER", "FET", "GRT", "SAND", "MANA", "AXS", "ICP", "EGLD", "XMR", "ZEC", "DASH"}
 
 
 def _krypto_kuerzel(name):
@@ -7233,6 +7239,7 @@ def update_trailing_sl(h):
                     target_sl = round(peak * (1 + TRAIL_PCT), 5)
 
                 any_updated = False
+                final_sl = None     # v16.1.1: vorher nur im Trailing-Zweig gesetzt -> Absturz nach Breakeven
                 for p in positions:
                     deal_id  = p["position"]["dealId"]
                     cur_sl   = float(p["position"].get("stopLevel", 0) or 0)
@@ -7254,6 +7261,7 @@ def update_trailing_sl(h):
                             )
                             if r_be.status_code == 200:
                                 cur_sl = be_sl
+                                final_sl = be_sl
                                 any_updated = True
                                 logging.info(f"Breakeven-SL: {instrument} {direction} "
                                              f"{be_sl:.5f} (+{profit_pct:.1f}%)")
@@ -7494,7 +7502,7 @@ def update_trailing_sl(h):
                     )
                     logging.info(msg)
                     # Telegram nur bei signifikanter SL-Änderung (>1%)
-                    sl_pct = abs(final_sl - cur_sl) / max(cur_sl, 0.0001) * 100
+                    sl_pct = abs(final_sl - cur_sl) / max(cur_sl, 0.0001) * 100 if final_sl is not None else 0.0
                     if sl_pct >= 1.0:
                         try:
                             bot.send_message(MY_CHAT_ID,
@@ -9381,7 +9389,7 @@ def execute_nexus_trade(analysis, erlaubte_signale=None):
                 results.append(msg); logging.info(msg); continue
         if not epic_positions and not krypto_erlaubt(sym):
             # v16.1: gilt in beiden Modi (Gremium und alter Ablauf) - nur Neueinstiege
-            msg = f"⛔ {sym}: Krypto nur {', '.join(sorted(KRYPTO_ERLAUBT))} (KRYPTO_ERLAUBT) - nicht eröffnet"
+            msg = f"⛔ {sym}: Krypto nur {', '.join(sorted(KRYPTO_ERLAUBT)) or 'keine'} (KRYPTO_ERLAUBT) - nicht eröffnet"
             results.append(msg); logging.info(msg); continue
         if not epic_positions:
             _offen_pos = get_positions(h) or []
@@ -12454,7 +12462,7 @@ Komutlar: /help
             konfig_uyarilar.append("👔 Vorsitz: KI-Kette (GREMIUM_VORSITZ=kette)")
         konfig_uyarilar.append(f"🗳️ Gremium-Anbieter: {', '.join(GREMIUM_PROVIDER or PROVIDER_ORDER)} (ohne Ollama)")
         konfig_uyarilar.append("🏛️ " + gremium_regel_text())
-        konfig_uyarilar.append("🪙 Krypto: " + ("alle" if KRYPTO_ERLAUBT is None else ", ".join(sorted(KRYPTO_ERLAUBT)))
+        konfig_uyarilar.append("🪙 Krypto: " + ("alle" if KRYPTO_ERLAUBT is None else (", ".join(sorted(KRYPTO_ERLAUBT)) or "keine"))
                                + " (KRYPTO_ERLAUBT)")
         if SCAN_INTERVAL_SEC < 3 * 3600:
             konfig_uyarilar.append(f"⚠️ Scan alle {SCAN_INTERVAL_SEC / 3600:g} h: das Gremium braucht je Markt 11 KI-Aufrufe - "
