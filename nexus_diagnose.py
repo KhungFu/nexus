@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "9 (fuer NEXUS v16.1.2)"
+VERSION = "9.1 (fuer NEXUS v16.1.3)"
 
 K = {}          # Kennzahlen fuer die Kurzfassung am Ende (auch fuer /diagnose in Telegram)
 KURZ_MARKE = "KURZFASSUNG"
@@ -113,6 +113,8 @@ EREIGNISSE = [
     ("Eigene Order mit dealId gemerkt", "EIGENE ORDER:"),
     ("KI: Claude-Vorsitz hat geantwortet", "[OK] Claude-Vorsitz"),
     ("KI: Claude-Vorsitz Fehler", "Claude-Vorsitz Fehler"),
+    ("KI: Ersatz Claude (Kette)", "[OK] Claude-Kette"),
+    ("KI: Claude (Kette) Fehler", "Claude-Kette Fehler"),
     ("Sprache gesetzt", "Sprache gesetzt"),
 ]
 

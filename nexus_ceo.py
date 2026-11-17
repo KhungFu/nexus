@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1.2"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1.3"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -3082,11 +3082,18 @@ def call_ai(prompt: str, system: str = "", use_grounding: bool = False,
             return resp.choices[0].message.content
         return ai_chain_call("nvidia", _einmal)
 
+    def _try_claude():
+        # v16.1.3: Claude ueber die Claude-CLI (claude -p) mit deinem eigenen Claude-Abo -
+        # dieselbe abgeschottete Aufrufart wie beim Gremiums-Vorsitz (keine Werkzeuge, keine .env-Schluessel)
+        t = _claude_ask(prompt, system, zweck="Kette", sprache=False)
+        return None if (not t or t.startswith("⚠️")) else t
+
     PROVIDER_FN = {
         "gemini": _try_gemini,
         "groq":   _try_groq,
         "qwen":   _try_qwen,
         "nvidia": _try_nvidia,
+        "claude": _try_claude,
     }
 
     if ollama_nur:
@@ -10371,14 +10378,16 @@ def _claude_cli_pfad():
         [os.path.expanduser("~/.local/bin"), "/usr/local/bin", "/usr/bin", "/opt/node22/bin"]))
 
 
-def _claude_ask(prompt, system):
+def _claude_ask(prompt, system, zweck="Vorsitz", sprache=True):
     """v16.0: Vorsitz ueber Claude Code (claude -p) mit dem eigenen Claude-Abo.
+    v16.1.3: auch als Anbieter in PROVIDER_ORDER ("claude") - zweck steht im Log (Vorsitz / Kette),
+    sprache=False wenn call_ai den Sprachhinweis schon angehaengt hat.
     Keine Werkzeuge (--tools ""), keine gespeicherte Sitzung, leerer Arbeitsordner,
     keine .env-Schluessel in der Umgebung. Rueckgabe: Antworttext oder '⚠️ ...'."""
     import subprocess, tempfile
     exe = _claude_cli_pfad()
     if not exe:
-        logging.error(f"Claude-Vorsitz Fehler: claude-CLI nicht gefunden (CLAUDE_CLI={CLAUDE_CLI})")
+        logging.error(f"Claude-{zweck} Fehler: claude-CLI nicht gefunden (CLAUDE_CLI={CLAUDE_CLI})")
         return "⚠️ claude-CLI nicht gefunden"
     wd = os.path.join(tempfile.gettempdir(), "nexus_vorsitz")
     os.makedirs(wd, exist_ok=True)
@@ -10387,15 +10396,16 @@ def _claude_ask(prompt, system):
     env["PATH"] = os.pathsep.join([os.path.dirname(exe), os.path.expanduser("~/.local/bin"), env.get("PATH", "/usr/bin:/bin")])
     env.setdefault("HOME", os.path.expanduser("~"))
     cmd = [exe, "-p", "--model", CLAUDE_MODELL, "--output-format", "json", "--tools", "",
-           "--system-prompt", lang_ai(system), "--no-session-persistence", "--strict-mcp-config"]
+           "--system-prompt", lang_ai(system) if sprache else (system or ""), "--no-session-persistence",
+           "--strict-mcp-config"]
     t0 = time.time()
     try:
         r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT, cwd=wd, env=env)
     except subprocess.TimeoutExpired:
-        logging.error(f"Claude-Vorsitz Fehler: keine Antwort in {CLAUDE_TIMEOUT}s")
+        logging.error(f"Claude-{zweck} Fehler: keine Antwort in {CLAUDE_TIMEOUT}s")
         return "⚠️ claude: Zeitüberschreitung"
     except Exception as e:
-        logging.error(f"Claude-Vorsitz Fehler: {e}")
+        logging.error(f"Claude-{zweck} Fehler: {e}")
         return f"⚠️ claude: {e}"
     d = None
     for zeile in reversed((r.stdout or "").strip().splitlines()):
@@ -10408,9 +10418,9 @@ def _claude_ask(prompt, system):
     if not isinstance(d, dict) or d.get("is_error") or d.get("subtype") not in (None, "success") or not d.get("result"):
         grund = (d or {}).get("result") if isinstance(d, dict) else None
         grund = grund or (r.stderr or r.stdout or "").strip()[-300:] or f"Exit {r.returncode}"
-        logging.error(f"Claude-Vorsitz Fehler (Exit {r.returncode}): {str(grund)[:300]}")
+        logging.error(f"Claude-{zweck} Fehler (Exit {r.returncode}): {str(grund)[:300]}")
         return f"⚠️ claude: {str(grund)[:200]}"
-    logging.info(f"[OK] Claude-Vorsitz ({CLAUDE_MODELL}) {time.time() - t0:.0f}s")
+    logging.info(f"[OK] Claude-{zweck} ({CLAUDE_MODELL}) {time.time() - t0:.0f}s")
     return str(d["result"])
 
 
@@ -12375,7 +12385,7 @@ def main_loop():
                 if quota_meldung():  # v15.18: nur bei geaendertem Grund, sonst hoechstens alle 6 h
                     _quota_msg_ts = time.time()
 
-                if GROQ_KEYS or QWEN_API_KEY:
+                if GROQ_KEYS or QWEN_API_KEY or "claude" in [x.lower() for x in PROVIDER_ORDER]:
                     # v15.10: Fallback NUR mit echten Daten (Gate-Keeper-Kandidaten
                     # + Live-Kurse). Vorher bekam die KI keinerlei Marktdaten und
                     # hat Symbole, Groessen und Preise erfunden.
@@ -12390,7 +12400,7 @@ def main_loop():
                                 system=_fb_system,
                                 use_grounding=False
                             )
-                        logging.info(f"Groq/Qwen fallback analiz: {len(analysis)} karakter")
+                        logging.info(f"Ersatz-KI fallback analiz ({','.join(PROVIDER_ORDER)}): {len(analysis)} karakter")
                         Health.report("call_ai_fallback", True, "Groq/Qwen OK")
                     except Exception as _fb_e:
                         Health.report("call_ai_fallback", False, str(_fb_e))
@@ -12612,6 +12622,8 @@ Komutlar: /help
             _cnt = len(_AI_KEYS["qwen"])  # v15.22: alle Keys zaehlen
         elif _prov == "nvidia":
             _cnt = len(_AI_KEYS["nvidia"])  # v15.22
+        elif _prov == "claude":
+            _cnt = 1 if _claude_cli_pfad() else 0       # v16.1.3: 1 = CLI gefunden (eigenes Claude-Abo)
         else:
             _cnt = 1 if os.getenv(f"{_prov.upper()}_API_KEY", "").strip() else 0
         _prov_display.append(f"{_prov}({_cnt})")
