@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1.4"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1.5"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -1642,18 +1642,29 @@ hard_block_lock = threading.Lock()
 HARD_BLOCK_ASSETS = {}  # {symbol: {"reason": str, "action": "BUY"|"SELL"|"ALL", "timestamp": str}}
 
 # Keyword -> Asset mapping (Telegram mesajlarindan otomatik parse)
-ASSET_KEYWORDS = {
-    "silver": "SILVER", "silber": "SILVER",
-    "gold": "GOLD", "altin": "GOLD",
+# v16.1.5: eigener Name. Vorher hiess sie wie die Nachrichten-Liste weiter unten (ASSET_KEYWORDS),
+# wurde von ihr ueberschrieben, und Sperr-Nachrichten wie "Gold nicht handeln" fanden nie einen Markt.
+BLOCK_ASSET_KEYWORDS = {
+    "silver": "SILVER", "silber": "SILVER", "gümüş": "SILVER",
+    "gold": "GOLD", "altin": "GOLD", "altın": "GOLD",
     "oil": "OIL_BRENT", "brent": "OIL_BRENT", "petrol": "OIL_BRENT",
-    "crude": "OIL_CRUDE",
-    "gas": "NATURAL_GAS", "naturalgas": "NATURAL_GAS", "dogalgaz": "NATURAL_GAS",
+    "crude": "OIL_CRUDE", "wti": "OIL_CRUDE",
+    "gas": "NATURAL_GAS", "naturalgas": "NATURAL_GAS", "natural gas": "NATURAL_GAS", "erdgas": "NATURAL_GAS",
+    "dogalgaz": "NATURAL_GAS", "doğalgaz": "NATURAL_GAS",
     "gasoline": "GASOLINE", "benzin": "GASOLINE",
     "btc": "BTC_USD", "bitcoin": "BTC_USD",
     "eth": "ETH_USD", "ethereum": "ETH_USD",
     "sol": "SOL_USD", "solana": "SOL_USD",
     "xrp": "XRP_USD", "ripple": "XRP_USD",
-    "copper": "COPPER", "bakir": "COPPER",
+    "copper": "COPPER", "bakir": "COPPER", "bakır": "COPPER", "kupfer": "COPPER",
+    "öl": "OIL_BRENT", "ölpreis": "OIL_BRENT", "heating oil": "HEATING_OIL", "heizöl": "HEATING_OIL",
+    "platinum": "PLATINUM", "platin": "PLATINUM", "palladium": "PALLADIUM",
+    "aluminum": "ALUMINUM", "aluminium": "ALUMINUM", "zinc": "ZINC", "zink": "ZINC", "nickel": "NICKEL",
+    "wheat": "WHEAT", "weizen": "WHEAT", "buğday": "WHEAT", "corn": "CORN", "mais": "CORN", "mısır": "CORN",
+    "soybeans": "SOYBEANS", "soybean": "SOYBEANS", "soja": "SOYBEANS", "soya": "SOYBEANS",
+    "coffee": "COFFEE", "kaffee": "COFFEE", "kahve": "COFFEE", "sugar": "SUGAR", "zucker": "SUGAR",
+    "şeker": "SUGAR", "cotton": "COTTON", "baumwolle": "COTTON", "pamuk": "COTTON",
+    "cocoa": "COCOA", "kakao": "COCOA", "vix": "VIX",
     "heatingoil": "HEATING_OIL",
     "eurusd": "EURUSD",
 }
@@ -1662,11 +1673,23 @@ ASSET_KEYWORDS = {
 gemini_kandidaten = {}  # Global - wird in fetch_strategic_response gefüllt
 BLOCK_KEYWORDS     = ["nicht handeln", "alma", "satma", "trade etme", "kauf nicht",
                       "nicht kaufen", "engelle", "blokla", "durdur", "stop trading",
-                      "halt", "yasak", "verbot", "verkaufen und heute"]
+                      "yasak", "verbot", "verkaufen und heute"]   # v16.1.5: "halt" raus ("ist halt so")
 SELL_KEYWORDS      = ["verkaufen", "sat ", "sell", "kapat", "close", "schliessen"]
 BUY_BLOCK_KEYWORDS = ["nicht kaufen", "kauf nicht", "alma", "buy yapma"]
 UNBLOCK_KEYWORDS   = ["freigeben", "serbest", "tekrar al", "engeli kaldir",
                       "unblock", "wieder handeln", "izin ver", "artik al", "artik sat"]
+
+_BLOCK_ENDUNG_ERLAUBT = {"altin", "altın", "petrol", "dogalgaz", "doğalgaz", "bakir", "bakır", "gümüş", "benzin",
+                         "buğday", "mısır", "kahve", "şeker", "pamuk", "soya"}
+# Nur diese Woerter schliessen offene Positionen (v16.1.5). "sell", "sat", "verkaufen" sperren nur noch,
+# damit eine Notiz wie "Oel koennte fallen, eher sell" nicht sofort Positionen schliesst.
+CLOSE_KEYWORDS = ["kapat", "schließen", "schliessen", "close", "zumachen"]
+
+
+def _kw_treffer(t, kw, endung=False):
+    """Stichwort mit Wortgrenze; endung=True erlaubt angehaengte Endungen (kapatın, altını)."""
+    return re.search(r"(?<!\w)" + re.escape(kw) + ("" if endung else r"(?!\w)"), t) is not None
+
 
 def parse_hard_block(text):
     """
@@ -1675,25 +1698,26 @@ def parse_hard_block(text):
       block_type : "BLOCK" | "UNBLOCK" | None
       action     : "ALL" | "BUY" | "SELL"
     """
-    t = text.lower()
+    t = (text or "").lower()
     detected_asset = None
-    for kw, sym in ASSET_KEYWORDS.items():
-        if kw in t:
-            detected_asset = sym
+    # v16.1.5: laengste Woerter zuerst (gasoline vor gas) und mit Wortgrenze ("solange" ist kein SOL)
+    for kw in sorted(BLOCK_ASSET_KEYWORDS, key=len, reverse=True):
+        if _kw_treffer(t, kw, endung=kw in _BLOCK_ENDUNG_ERLAUBT):
+            detected_asset = BLOCK_ASSET_KEYWORDS[kw]
             break
     if not detected_asset:
         return None, None, None
 
     for kw in UNBLOCK_KEYWORDS:
-        if kw in t:
+        if _kw_treffer(t, kw, endung=True):
             return detected_asset, "ALL", "UNBLOCK"
 
     for kw in BUY_BLOCK_KEYWORDS:
-        if kw in t:
+        if _kw_treffer(t, kw):
             return detected_asset, "BUY", "BLOCK"
 
-    is_sell  = any(kw in t for kw in SELL_KEYWORDS)
-    is_block = any(kw in t for kw in BLOCK_KEYWORDS)
+    is_sell  = any(_kw_treffer(t, kw.strip()) for kw in SELL_KEYWORDS)
+    is_block = any(_kw_treffer(t, kw, endung=kw in ("engelle", "blokla", "durdur")) for kw in BLOCK_KEYWORDS)
 
     if is_sell or is_block:
         return detected_asset, "ALL", "BLOCK"
@@ -11606,7 +11630,7 @@ def handle_free_text(message):
             )
 
             # Eger "sat/verkaufen" talimatiysa: mevcut pozisyonlari kapat
-            is_sell_order = any(kw in user_text.lower() for kw in ["verkaufen", "sat ", "sell", "kapat", "close"])
+            is_sell_order = any(_kw_treffer(user_text.lower(), kw, endung=True) for kw in CLOSE_KEYWORDS)
             if is_sell_order:
                 try:
                     h = capital_session.get_headers()
