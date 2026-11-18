@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1.3"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.1.4"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -7721,13 +7721,87 @@ ASSET_KEYWORDS = {
     "GOLD": ["gold","altın","xau","federal reserve","fed","inflation","ecb","zins"],
 }
 
+# v16.1.4: Stichwoerter mit Wortgrenze statt Teilstring - vorher war "Brentford" (Fussball) eine
+# Oel-Nachricht, "soil"/"boil" ebenfalls, "eth" traf "method". Tuerkische/deutsche Woerter
+# duerfen eine Endung haben (petrolde, altını, doğalgazın), englische muessen ganz passen.
+_TAG_ENDUNG_ERLAUBT = {"petrol", "gümüş", "altın", "doğalgaz", "kripto", "dolar", "silber", "zins"}
+
+
+def _wort_muster(woerter):
+    teile = []
+    for w in woerter:
+        w = w.lower()
+        teile.append(r"(?<!\w)" + re.escape(w) + ("" if w in _TAG_ENDUNG_ERLAUBT else r"(?!\w)"))
+    return re.compile("|".join(teile)) if teile else None
+
+
+_ASSET_MUSTER = {}
+
+
 def detect_asset_tag(text):
-    """Metinden asset tag tespit et."""
-    text_lower = text.lower()
+    """Metinden asset tag tespit et (v16.1.4: mit Wortgrenzen)."""
+    text_lower = (text or "").lower()
     for asset, keywords in ASSET_KEYWORDS.items():
-        if any(kw in text_lower for kw in keywords):
+        m = _ASSET_MUSTER.get(asset)
+        if m is None:
+            m = _ASSET_MUSTER[asset] = _wort_muster(keywords)
+        if m and m.search(text_lower):
             return asset
     return "GENEL"
+
+
+# v16.1.4: Fuer das Gremium zaehlt aus dem Sammeltopf "GENEL" nur, was die Maerkte allgemein bewegt.
+# Sport, Lokalpolitik usw. landen auch in GENEL und haben die Mitglieder verwirrt.
+_MAKRO_WOERTER = [
+    "fed", "federal reserve", "fomc", "powell", "interest rate", "interest rates", "rate cut", "rate cuts",
+    "rate hike", "rate hikes", "inflation", "cpi", "ppi", "gdp", "recession", "payrolls", "nonfarm", "nfp",
+    "jobs report", "unemployment", "ecb", "lagarde", "boj", "pboc", "opec", "opec+", "dollar", "dxy",
+    "treasury", "treasuries", "yields", "bond yields", "tariff", "tariffs", "sanctions", "ceasefire",
+    "invasion", "missile", "stimulus", "commodities", "commodity", "stock market", "wall street",
+    "faiz", "enflasyon", "merkez bankası", "resesyon", "emtia", "zins", "inflationsrate", "rezession",
+    "ezb", "notenbank", "konjunktur", "rohstoff", "rohstoffe",
+]
+_MAKRO_MUSTER = _wort_muster(_MAKRO_WOERTER)
+
+# Stichwoerter je Gremium-Markt, die in ASSET_KEYWORDS fehlen (deren Nachrichten liegen in GENEL)
+_G_NEWS_WORTE = {
+    "OIL_CRUDE":   ["oil", "crude", "wti", "brent", "opec", "petrol"],
+    "OIL_BRENT":   ["oil", "crude", "wti", "brent", "opec", "petrol"],
+    "HEATING_OIL": ["heating oil", "diesel", "distillate", "distillates", "oil", "crude", "opec"],
+    "GASOLINE":    ["gasoline", "benzin", "refinery", "refineries", "oil", "crude", "opec"],
+    "NATURAL_GAS": ["natural gas", "natgas", "lng", "gas storage", "doğalgaz", "erdgas"],
+    "GOLD":        ["gold", "altın", "bullion", "xau"],
+    "SILVER":      ["silver", "gümüş", "silber", "xag"],
+    "PLATINUM":    ["platinum", "platin"],
+    "PALLADIUM":   ["palladium"],
+    "COPPER":      ["copper", "bakır", "kupfer"],
+    "ALUMINUM":    ["aluminum", "aluminium", "alüminyum"],
+    "ZINC":        ["zinc", "zink", "çinko"],
+    "NICKEL":      ["nickel", "nikel"],
+    "WHEAT":       ["wheat", "buğday", "weizen", "grain", "grains"],
+    "CORN":        ["corn", "maize", "mısır", "mais", "grain", "grains"],
+    "SOYBEANS":    ["soybean", "soybeans", "soy", "soja", "soya"],
+    "COFFEE":      ["coffee", "arabica", "robusta", "kahve", "kaffee"],
+    "SUGAR":       ["sugar", "şeker", "zucker"],
+    "COTTON":      ["cotton", "pamuk", "baumwolle"],
+    "COCOA":       ["cocoa", "kakao"],
+    "VIX":         ["vix", "volatility", "volatilität", "volatilite"],
+}
+_G_NEWS_MUSTER = {}
+
+
+def _g_news_relevant(text, asset_tag, sym=None):
+    """True, wenn eine Schlagzeile fuer diesen Markt zaehlt: eigenes Stichwort oder Makro-Thema."""
+    t = (text or "").lower()
+    if asset_tag != "GENEL" and detect_asset_tag(t) == asset_tag:
+        return True
+    if sym:
+        m = _G_NEWS_MUSTER.get(sym)
+        if m is None and sym in _G_NEWS_WORTE:
+            m = _G_NEWS_MUSTER[sym] = _wort_muster(_G_NEWS_WORTE[sym])
+        if m and m.search(t):
+            return True
+    return bool(_MAKRO_MUSTER and _MAKRO_MUSTER.search(t))
 
 def quick_sentiment(text):
     """
@@ -7884,10 +7958,12 @@ def collect_x_via_search(sources_data):
         return 0
 
 
-def get_news_summary_for_asset(asset_tag, days=14):
+def get_news_summary_for_asset(asset_tag, days=14, streng=False, sym=None):
     """
     Bir asset icin son N gun haber ozeti.
     Gemini'ye verilecek format.
+    v16.1.4: streng=True (Gremium) - jede Schlagzeile wird neu geprueft (Wortgrenzen, auch alte
+    Eintraege mit falschem Tag) und aus GENEL bleibt nur, was zum Markt (sym) oder zur Makrolage passt.
     """
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
@@ -7900,8 +7976,8 @@ def get_news_summary_for_asset(asset_tag, days=14):
                 WHERE (asset_tag=? OR asset_tag='GENEL')
                 AND published_at >= ?
                 ORDER BY published_at DESC
-                LIMIT 20
-            """, (asset_tag, cutoff)).fetchall()
+                LIMIT ?
+            """, (asset_tag, cutoff, 400 if streng else 20)).fetchall()
 
             x_posts = conn.execute("""
                 SELECT account, tweet_text, tweet_date, sentiment, sentiment_label
@@ -7909,10 +7985,13 @@ def get_news_summary_for_asset(asset_tag, days=14):
                 WHERE (asset_tag=? OR asset_tag='GENEL')
                 AND tweet_date >= ?
                 ORDER BY tweet_date DESC
-                LIMIT 15
-            """, (asset_tag, cutoff)).fetchall()
+                LIMIT ?
+            """, (asset_tag, cutoff, 300 if streng else 15)).fetchall()
 
             conn.close()
+        if streng:
+            news = [n for n in news if _g_news_relevant(n[1], asset_tag, sym)][:20]
+            x_posts = [x for x in x_posts if _g_news_relevant(x[1], asset_tag, sym)][:15]
     except Exception as e:
         logging.warning(f"News summary DB hatasi ({asset_tag}): {e}")
         return f"[{asset_tag}] Haber DB henuz hazir degil (/newscollect ile doldurun)"
@@ -10064,6 +10143,12 @@ def _g_rsi(werte, n=14):
     return 100.0 if ver == 0 else 100 - 100 / (1 + gew / ver)
 
 
+def _g_tf_text(text, tf):
+    """v16.1.4: 'MA:SELL ADX:71.0 RSI:35.7' -> 'MA(Tag-kurz):SELL ADX(Tag-kurz):71.0 RSI(Tag-kurz):35.7',
+    damit die Mitglieder die Werte den Zeitrahmen zuordnen koennen."""
+    return re.sub(r"\b(MA|ADX|RSI):", lambda m: f"{m.group(1)}({tf}):", str(text or ""))
+
+
 def _g_pct(a, b):
     return (a - b) / b * 100 if b else 0.0
 
@@ -10153,12 +10238,13 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
             z.append(f"  Veränderung: 5 Tage {_g_pct(last, c[-6]):+.1f} % | 20 Tage {_g_pct(last, c[-21]):+.1f} % | "
                      + (f"60 Tage {_g_pct(last, c[-61]):+.1f} % | " if len(c) > 61 else "")
                      + f"Spanne {len(c)} Tage: {lo:.6g} - {hi:.6g} (Kurs bei {(last - lo) / (hi - lo) * 100 if hi > lo else 50:.0f} %)"
-                     + (f" | RSI14 {_g_rsi(c):.0f}" if _g_rsi(c) is not None else ""))
+                     + (f" | RSI14 Tag {_g_rsi(c):.0f}" if _g_rsi(c) is not None else ""))
         else:
             z.append(f"TECHNIK TAG: zu wenige Kerzen ({len(c)})")
     except Exception as e:
         z.append(f"TECHNIK TAG: k. A. ({str(e)[:60]})")
-    z.append(f"SIGNAL PYTHON (Tages-MA/ADX/RSI): {tech.get('sinyal')} Stärke {tech.get('guc')} | {str(tech.get('aciklama', ''))[:200]}")
+    z.append(f"SIGNAL PYTHON (Tageskerzen, MA9/26, ADX, RSI über 30 Kerzen): {tech.get('sinyal')} Stärke {tech.get('guc')} | "
+             f"{_g_tf_text(tech.get('aciklama', ''), 'Tag-kurz')[:200]}")
     if tech.get("skor"):
         z.append(f"  Score {tech['skor'].get('score', '?')}/{tech['skor'].get('max_score', '?')}: {str(tech['skor'].get('details', ''))[:250]}")
 
@@ -10166,9 +10252,11 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
     if not is_crypto(sym):
         try:
             s4, g4, d4 = _analyse_timeframe(epic, "HOUR_4", 30)
-            z.append(f"TECHNIK 4H: {s4} Stärke {g4} | {str(d4)[:160]}")
+            z.append(f"TECHNIK 4H: {s4} Stärke {g4} | {_g_tf_text(d4, '4H')[:160]}")
         except Exception:
             z.append("TECHNIK 4H: k. A.")
+    z.append("  Hinweis: RSI/ADX unterscheiden sich je Zeitrahmen und Rechenweise (Tag = 14 Tage geglättet, "
+             "Tag-kurz = 30 Tageskerzen einfach, 4H = Vier-Stunden-Kerzen). Kein Widerspruch in den Daten.")
 
     # Fundamentaldaten je Gruppe
     grp = markt_gruppe(sym) or markt_gruppe(epic)
@@ -10212,7 +10300,8 @@ def _gremium_dossier(sym, cfg, h, makro, positionen, acc, tech):
 
     # Nachrichten zum Asset
     try:
-        news = get_news_summary_for_asset(_G_NEWS_TAG.get(sym, sym if sym in ASSET_KEYWORDS else "GENEL"), days=7)
+        news = get_news_summary_for_asset(_G_NEWS_TAG.get(sym, sym if sym in ASSET_KEYWORDS else "GENEL"), days=7,
+                                          streng=True, sym=sym)
         z.append("NACHRICHTEN (Datenbank, 7 Tage):\n" + str(news)[:900])
     except Exception:
         z.append("NACHRICHTEN: k. A.")
