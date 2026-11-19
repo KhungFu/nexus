@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.1.5"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.2"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -11571,6 +11571,17 @@ def handle_unut(message):
     except Exception as e:
         bot.send_message(MY_CHAT_ID, "Silme hatasi: " + str(e))
 
+@bot.message_handler(commands=["schatten", "shadow", "golge", "gölge"])
+def handle_schatten(message):
+    """v16.2: /schatten - Vergleich der vier Ausstiegs-Varianten."""
+    try:
+        with _schatten_lock:
+            text = schatten_bericht()
+        _bot_send_raw(MY_CHAT_ID, text)
+    except Exception as e:
+        _bot_send_raw(MY_CHAT_ID, f"🔍 Schatten: {str(e)[:200]}")
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_free_text(message):
     """
@@ -11986,6 +11997,344 @@ def letzte_schliessung(epic, direction):
         return 0.0
 
 
+# ============================================================
+# v16.2 SCHATTENMODUS - rechnet je NEXUS-Trade vier Ausstiegs-Varianten mit.
+# Gehandelt wird weiter nur nach der echten Regel; die Varianten stehen nur im Notizbuch.
+#   jetzt  : wie der Bot heute (Mirror-TP-Stufen, Stop-Leiter ab Stufe 1, Breakeven ab +1 %,
+#            Trailing 5 % ab +1,5 %)
+#   geduld : gleiche Stufen, aber Stop erst nach Stufe 2 auf den Einstieg, kein Breakeven ab +1 %
+#   fest   : fester Stop und festes Ziel, sonst nichts
+#   ki     : fester Stop und festes Ziel; jede Stunde fragt der Bot eine KI "halten oder schliessen?"
+# Ergebnis in R (1 R = so viel, wie der volle Stop gekostet haette) - unabhaengig von Groesse und Waehrung.
+# ============================================================
+SCHATTEN_AKTIV    = os.getenv("SCHATTEN_AKTIV", "true").strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
+SCHATTEN_KI       = os.getenv("SCHATTEN_KI", "true").strip().lower() not in ("false", "0", "nein", "no", "aus", "off")
+SCHATTEN_KI_MIN   = _env_zahl("SCHATTEN_KI_MIN", 60, int)       # so oft fragt die KI-Variante (Minuten)
+SCHATTEN_MAX_TAGE = _env_zahl("SCHATTEN_MAX_TAGE", 14, int)     # danach wird zum letzten Kurs abgerechnet
+_SCHATTEN_DATEI   = os.path.join(BASE_DIR, "nexus_schatten.json")
+_schatten_lock    = threading.Lock()
+_schatten_ki_lock = threading.Lock()
+SCHATTEN_VARIANTEN = ("jetzt", "geduld", "fest", "ki")
+SCHATTEN_NAMEN = {"jetzt": "So wie jetzt", "geduld": "Mehr Geduld", "fest": "Fester Stop/Ziel", "ki": "KI entscheidet"}
+
+
+def _schatten_laden():
+    try:
+        with open(_SCHATTEN_DATEI, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("trades"), list):
+            return d
+    except Exception:
+        pass
+    return {"trades": []}
+
+
+def _schatten_speichern(d):
+    try:
+        tmp = _SCHATTEN_DATEI + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _SCHATTEN_DATEI)
+    except Exception as e:
+        logging.warning(f"Schatten speichern: {e}")
+
+
+def _schatten_mults():
+    """Mirror-TP-Stufen wie in update_trailing_sl (leer, wenn Mirror-TP aus ist)."""
+    if os.getenv("MIRROR_TP_ENABLED", "true").lower() != "true":
+        return []
+    return [float(os.getenv("MIRROR_TP_LEVEL_1_MULT", "0.5")), float(os.getenv("MIRROR_TP_LEVEL_2_MULT", "1.0")),
+            float(os.getenv("MIRROR_TP_LEVEL_3_MULT", "1.5"))]
+
+
+def schatten_neu(sym, epic, richtung, entry, sl, tp, atr, quelle="", jetzt_ts=None):
+    """Neuen Schatten-Trade anlegen. None, wenn der Stop nicht auf der Verlustseite liegt (dann ist er
+    schon nachgezogen und das Anfangsrisiko unbekannt)."""
+    vz = 1 if richtung == "BUY" else -1
+    r = vz * (entry - sl)
+    if entry <= 0 or sl <= 0 or r <= entry * 0.0002:
+        return None
+    var = {}
+    for art in SCHATTEN_VARIANTEN:
+        var[art] = {"rest": 1.0, "erl": 0.0, "sl": sl, "stufen": [], "peak": entry, "zu": False,
+                    "grund": "", "ende": None, "ende_kurs": None}
+    var["ki"]["fragen"] = []
+    return {"id": f"{epic}_{richtung}_{entry:.5f}", "sym": sym, "epic": epic, "dir": richtung,
+            "entry": entry, "sl0": sl, "tp0": tp or 0.0, "atr": atr or 0.0, "R": r,
+            "mults": _schatten_mults() if (atr or 0) > 0 else [],
+            "leiter": bool(STOP_LEITER), "quelle": quelle,
+            "start": jetzt_ts or time.time(), "kurs": entry, "kurs_ts": jetzt_ts or time.time(),
+            "verlauf": [], "fertig": False, "var": var}
+
+
+def _schatten_enger(v, vz, ziel, kurs):
+    """Stop nur enger ziehen und nur, wenn er noch auf der richtigen Seite des Kurses liegt."""
+    if ziel is None or vz * (kurs - ziel) <= 0:
+        return
+    if vz * (ziel - v["sl"]) > 0:
+        v["sl"] = ziel
+
+
+def _schatten_zu(v, anteil_kurs, rec, grund, ts):
+    vz = 1 if rec["dir"] == "BUY" else -1
+    v["erl"] += v["rest"] * vz * (anteil_kurs - rec["entry"]) / rec["R"]
+    v["rest"], v["zu"], v["grund"], v["ende"], v["ende_kurs"] = 0.0, True, grund, ts, anteil_kurs
+
+
+def schatten_schritt(rec, kurs, ts=None, ki_schliessen=False):
+    """Einen Kurs (Ausstiegsseite: Bid bei BUY, Ask bei SELL) auf alle offenen Varianten anwenden."""
+    ts = ts or time.time()
+    vz = 1 if rec["dir"] == "BUY" else -1
+    entry, R, tp = rec["entry"], rec["R"], rec.get("tp0") or 0.0
+    for art in SCHATTEN_VARIANTEN:
+        v = rec["var"][art]
+        if v["zu"]:
+            continue
+        # 1. Stop und Ziel (Broker fuehrt zum Stop-/Zielkurs aus)
+        if vz * (kurs - v["sl"]) <= 0:
+            _schatten_zu(v, v["sl"], rec, "Stop" if vz * (v["sl"] - rec["sl0"]) <= 1e-12 else "Stop nachgezogen", ts)
+            continue
+        if tp > 0 and vz * (kurs - tp) >= 0:
+            _schatten_zu(v, tp, rec, "Ziel", ts)
+            continue
+        if art == "ki" and ki_schliessen:
+            _schatten_zu(v, kurs, rec, "KI", ts)
+            continue
+        if art in ("jetzt", "geduld"):
+            # 2. Teilverkaeufe wie Mirror-TP (je 25 % der Anfangsgroesse)
+            for i, m in enumerate(rec.get("mults") or []):
+                if i < len(v["stufen"]):
+                    continue
+                lvl = entry + vz * rec["atr"] * m
+                if vz * (kurs - lvl) < 0:
+                    break
+                anteil = min(0.25, v["rest"])
+                v["erl"] += anteil * vz * (kurs - entry) / R
+                v["rest"] = round(v["rest"] - anteil, 9)
+                v["stufen"].append(kurs)
+            if v["rest"] <= 1e-9:
+                v["rest"], v["zu"], v["grund"], v["ende"], v["ende_kurs"] = 0.0, True, "alle Stufen", ts, kurs
+                continue
+            # 3. Stop nachziehen
+            k = len(v["stufen"])
+            be = entry * (1 + vz * 0.0003)
+            if art == "jetzt" and rec.get("leiter", True):
+                ziel = {0: None, 1: be}.get(k, v["stufen"][k - 2] if k >= 2 else None)
+                _schatten_enger(v, vz, ziel, kurs)
+            elif art == "geduld":
+                ziel = None if k < 2 else (be if k == 2 else v["stufen"][k - 3])
+                _schatten_enger(v, vz, ziel, kurs)
+            gewinn_pct = vz * (kurs - entry) / entry * 100
+            if art == "jetzt" and gewinn_pct >= 1.0:
+                _schatten_enger(v, vz, be, kurs)
+            v["peak"] = max(v["peak"], kurs) if vz > 0 else min(v["peak"], kurs)
+            if gewinn_pct >= 1.5:
+                _schatten_enger(v, vz, v["peak"] * (1 - vz * 0.05), kurs)
+    rec["kurs"], rec["kurs_ts"] = kurs, ts
+    if all(rec["var"][a]["zu"] for a in SCHATTEN_VARIANTEN):
+        rec["fertig"] = True
+
+
+def schatten_wert(rec, art):
+    """Ergebnis in R: abgerechnet + (falls offen) Rest zum letzten Kurs."""
+    v = rec["var"][art]
+    vz = 1 if rec["dir"] == "BUY" else -1
+    return v["erl"] + v["rest"] * vz * (rec["kurs"] - rec["entry"]) / rec["R"]
+
+
+def schatten_abschluss_text(rec):
+    teile = [f"{SCHATTEN_NAMEN[a]} {schatten_wert(rec, a):+.2f} R" for a in SCHATTEN_VARIANTEN]
+    return f"🔍 Schatten {rec['sym']} {rec['dir']} fertig:\n" + "\n".join("  " + t for t in teile)
+
+
+def schatten_bericht(d=None):
+    d = d or _schatten_laden()
+    trades = d.get("trades") or []
+    if not trades:
+        return ("🔍 Schattenmodus: noch keine Trades.\nSobald NEXUS eine Position eröffnet, rechnet der Bot "
+                "vier Ausstiegs-Varianten mit. 1 R = so viel, wie der volle Stop gekostet hätte.")
+    z = [f"🔍 SCHATTENMODUS - {len(trades)} Trades ({sum(1 for t in trades if t.get('fertig'))} fertig)",
+         "1 R = so viel, wie der volle Stop gekostet hätte", ""]
+    for a in SCHATTEN_VARIANTEN:
+        werte = [schatten_wert(t, a) for t in trades]
+        zu = [t for t in trades if t["var"][a]["zu"]]
+        gew = sum(1 for t in zu if schatten_wert(t, a) > 0.02)
+        verl = sum(1 for t in zu if schatten_wert(t, a) < -0.02)
+        z.append(f"{SCHATTEN_NAMEN[a]}: {sum(werte):+.2f} R | Ø {sum(werte) / len(werte):+.2f} R | "
+                 f"{gew} Gewinn / {verl} Verlust / {len(trades) - len(zu)} offen")
+    z.append("")
+    z.append("Letzte Trades (jetzt / Geduld / fest / KI):")
+    for t in trades[-8:]:
+        tag = datetime.fromtimestamp(t["start"]).strftime("%d.%m %H:%M")
+        werte = " / ".join(f"{schatten_wert(t, a):+.2f}" for a in SCHATTEN_VARIANTEN)
+        z.append(f"  {tag} {t['sym']} {t['dir']}: {werte}" + ("" if t.get("fertig") else " (läuft)"))
+    if not SCHATTEN_KI:
+        z.append("\nKI-Variante: aus (SCHATTEN_KI=false) - sie zählt dann wie 'Fester Stop/Ziel'.")
+    return "\n".join(z)
+
+
+def _schatten_ki_prompt(rec):
+    vz = 1 if rec["dir"] == "BUY" else -1
+    std = (time.time() - rec["start"]) / 3600
+    r_jetzt = vz * (rec["kurs"] - rec["entry"]) / rec["R"]
+    verlauf = ", ".join(f"{k:g}" for _, k in (rec.get("verlauf") or [])[-12:])
+    return (f"Offene Position: {rec['sym']} {rec['dir']}\n"
+            f"Einstieg {rec['entry']:g} vor {std:.1f} Stunden | Kurs jetzt {rec['kurs']:g} "
+            f"({r_jetzt:+.2f} R, 1 R = Abstand Einstieg-Stop)\n"
+            f"Stop {rec['sl0']:g} | Ziel {rec.get('tp0') or 'keins'}\n"
+            f"Kurse der letzten Stunden (alt -> neu): {verlauf or 'noch keine'}\n\n"
+            "Halten oder jetzt schließen? Der Stop und das Ziel bleiben in jedem Fall bestehen. "
+            "Erste Zeile nur HALTEN oder SCHLIESSEN, danach ein Satz Begründung.")
+
+
+def _schatten_ki_fragen(rec_id):
+    """Laeuft in einem eigenen Faden, damit der Schutz-Thread nicht wartet."""
+    if not _schatten_ki_lock.acquire(blocking=False):
+        return
+    try:
+        with _schatten_lock:
+            d = _schatten_laden()
+            rec = next((t for t in d["trades"] if t["id"] == rec_id and not t.get("fertig")), None)
+            prompt = _schatten_ki_prompt(rec) if rec else None
+        if not prompt:
+            return
+        antwort = call_ai(prompt, "Du bist ein vorsichtiger Trader. Du entscheidest nur, ob eine offene "
+                                  "Position jetzt geschlossen werden soll.", schnell=True) or ""
+        erste = antwort.strip().split("\n", 1)[0].upper()
+        if antwort.startswith("⚠️") or not ("HALT" in erste or "SCHLIESS" in erste or "SCHLIEß" in erste):
+            logging.info(f"Schatten-KI {rec_id}: keine verwertbare Antwort ({antwort[:80]})")
+            return
+        schliessen = "SCHLIESS" in erste or "SCHLIEß" in erste
+        with _schatten_lock:
+            d = _schatten_laden()
+            rec = next((t for t in d["trades"] if t["id"] == rec_id), None)
+            if not rec or rec["var"]["ki"]["zu"]:
+                return
+            rec["var"]["ki"]["fragen"].append([time.time(), "SCHLIESSEN" if schliessen else "HALTEN",
+                                               antwort.strip()[:200]])
+            if schliessen:
+                schatten_schritt(rec, rec["kurs"], ki_schliessen=True)
+                logging.info(f"Schatten-KI {rec['sym']} {rec['dir']}: SCHLIESSEN bei {rec['kurs']:g} "
+                             f"({schatten_wert(rec, 'ki'):+.2f} R)")
+            fertig_neu = rec.get("fertig")
+            _schatten_speichern(d)
+        if schliessen and fertig_neu:
+            try:
+                _bot_send_raw(MY_CHAT_ID, schatten_abschluss_text(rec))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning(f"Schatten-KI {rec_id}: {e}")
+    finally:
+        _schatten_ki_lock.release()
+
+
+def _schatten_kurs(h, epic, richtung, pos_kurse):
+    """Kurs auf der Ausstiegsseite. Aus den Positionen, sonst ein Markt-Abruf."""
+    q = pos_kurse.get(epic)
+    if not q:
+        try:
+            r = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10)
+            if r.status_code == 200:
+                sn = r.json().get("snapshot") or {}
+                q = (float(sn.get("bid") or 0), float(sn.get("offer") or 0))
+        except Exception:
+            q = None
+    if not q:
+        return 0.0
+    bid, ask = q
+    return bid if richtung == "BUY" else (ask or bid)
+
+
+def schatten_lauf(h):
+    """Aus dem Schutz-Thread (alle 5 Min). Legt neue NEXUS-Trades an und fuehrt alle offenen weiter."""
+    if not SCHATTEN_AKTIV:
+        return
+    pos = get_positions(h) or []
+    try:
+        with open(_EIGENE_DEALS_DATEI, encoding="utf-8") as f:
+            eigene = json.load(f)
+    except Exception:
+        eigene = {}
+    pos_kurse = {}
+    for p in pos:
+        try:
+            m = p["market"]
+            pos_kurse[m["epic"]] = (float(m.get("bid") or 0), float(m.get("offer") or 0))
+        except Exception:
+            pass
+    fertig_meldungen, ki_faellig = [], []
+    jetzt = time.time()
+    with _schatten_lock:
+        d = _schatten_laden()
+        ids = {t["id"] for t in d["trades"]}
+        # neue eigene Positionen aufnehmen
+        for p in pos:
+            try:
+                pp, m = p["position"], p["market"]
+                info = eigene.get(pp.get("dealId"))
+                if not info or info.get("quelle") == "manuell":
+                    continue
+                entry, sl = float(pp.get("level") or 0), float(pp.get("stopLevel") or 0)
+                rid = f"{m['epic']}_{pp['direction']}_{entry:.5f}"
+                if rid in ids or sl <= 0:
+                    continue
+                _vz = 1 if pp["direction"] == "BUY" else -1
+                if _vz * (entry - sl) <= entry * 0.0002:
+                    continue        # Stop schon am Einstieg/im Gewinn: Anfangsrisiko unbekannt
+                atr = 0.0
+                try:
+                    atr = float(get_atr_stop_loss(m["epic"], entry, pp["direction"])[1] or 0)
+                except Exception:
+                    pass
+                rec = schatten_neu(info.get("sym") or m["epic"], m["epic"], pp["direction"], entry, sl,
+                                   float(pp.get("profitLevel") or 0), atr, info.get("quelle", ""), jetzt)
+                if rec:
+                    d["trades"].append(rec)
+                    ids.add(rid)
+                    logging.info(f"Schatten: neu {rec['sym']} {rec['dir']} @ {entry:g} | Stop {sl:g} | "
+                                 f"Ziel {rec['tp0']:g} | ATR {atr:g}")
+            except Exception as e:
+                logging.debug(f"Schatten neu: {e}")
+        # offene weiterfuehren
+        for rec in d["trades"]:
+            if rec.get("fertig"):
+                continue
+            kurs = _schatten_kurs(h, rec["epic"], rec["dir"], pos_kurse)
+            if kurs <= 0:
+                continue
+            schatten_schritt(rec, kurs, jetzt)
+            ver = rec.setdefault("verlauf", [])
+            if not ver or jetzt - ver[-1][0] >= 3600 - 60:
+                ver.append([jetzt, kurs])
+                del ver[:-48]
+            if not rec.get("fertig") and jetzt - rec["start"] > SCHATTEN_MAX_TAGE * 86400:
+                for a in SCHATTEN_VARIANTEN:
+                    v = rec["var"][a]
+                    if not v["zu"]:
+                        _schatten_zu(v, kurs, rec, f"nach {SCHATTEN_MAX_TAGE} Tagen abgerechnet", jetzt)
+                rec["fertig"] = True
+            if rec.get("fertig"):
+                fertig_meldungen.append(schatten_abschluss_text(rec))
+            elif SCHATTEN_KI and not rec["var"]["ki"]["zu"]:
+                fragen = rec["var"]["ki"].get("fragen") or []
+                letzte = fragen[-1][0] if fragen else rec["start"]
+                if jetzt - letzte >= SCHATTEN_KI_MIN * 60:
+                    ki_faellig.append(rec["id"])
+        _schatten_speichern(d)
+    for t in fertig_meldungen:
+        logging.info(t.replace("\n", " |"))
+        try:
+            _bot_send_raw(MY_CHAT_ID, t)
+        except Exception:
+            pass
+    if ki_faellig:
+        def _alle(ids_):
+            for rid in ids_:
+                _schatten_ki_fragen(rid)
+        threading.Thread(target=_alle, args=(ki_faellig,), daemon=True).start()
+
+
 def schutz_loop():
     """
     5-Min koruma thread:
@@ -12008,6 +12357,10 @@ def schutz_loop():
                     closed_position_watch(h)  # v15.16: geschlossene Positionen melden (Grund + Ergebnis)
                 except Exception as _cw_e:
                     logging.warning(f"Schliess-Melder: {_cw_e}")
+                try:
+                    schatten_lauf(h)          # v16.2: Schattenmodus (nur Protokoll, handelt nicht)
+                except Exception as _sh_e:
+                    logging.warning(f"Schatten: {_sh_e}")
         except Exception as e:
             logging.error(f"Schutz-Thread hatasi: {e}")
         time.sleep(300)
@@ -12722,6 +13075,8 @@ Komutlar: /help
     else:
         konfig_uyarilar.append("⚠️ CAPITAL_ACCOUNT_ID fehlt in der .env - NEXUS handelt im Konto, das Capital.com "
                                "gerade aktiv hat (andere Programme mit denselben Zugangsdaten können es umstellen)")
+    konfig_uyarilar.append(("🔍 Schattenmodus: an" + (f", KI-Frage alle {SCHATTEN_KI_MIN} Min" if SCHATTEN_KI else ", ohne KI")
+                            + " - nur Protokoll, Bericht: /schatten") if SCHATTEN_AKTIV else "🔍 Schattenmodus: aus")
     konfig_uyarilar.append(f"📊 KI-Budget: {KI_BUDGET_STUNDE if KI_BUDGET_STUNDE > 0 else 'ohne Grenze'} Aufrufe/Stunde"
                            + (f" | Anbieter-Pause nach 2 Fehlern: {KI_PAUSE_MIN:g} Min." if KI_PAUSE_MIN > 0 else ""))
     # Provider-Anzeige mit Key-Anzahl (Merge aus Qwen-Session)
