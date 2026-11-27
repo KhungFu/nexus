@@ -908,7 +908,7 @@ META_LEARN_MIN_TRADES= int(os.getenv("META_LEARN_MIN_TRADES","15"))   # Min Trad
 META_LEARN_BLOCK_WR  = float(os.getenv("META_LEARN_BLOCK_WR","0.33")) # Win-Rate unter der geblockt wird
 HEARTBEAT_INTERVAL   = int(os.getenv("HEARTBEAT_INTERVAL",  "6"))     # Heartbeat alle N Zyklen
 SCAN_INTERVAL_SEC    = int(os.getenv("SCAN_INTERVAL_SEC", "21600"))  # 6h (v15.0 Macro-Scan)
-NEXUS_VERSION        = "v16.2"                                   # steht in der Startmeldung
+NEXUS_VERSION        = "v16.3"                                   # steht in der Startmeldung
 MAX_POSITIONEN       = int(os.getenv("MAX_POSITIONEN", "5"))          # v15.16: max. offene Positionen (vorher fest 5)
 MAX_VERLUSTE_PRO_TAG = int(os.getenv("MAX_VERLUSTE_PRO_TAG", "3"))    # v15.16: so viele Verluste pro Symbol/Tag, dann gesperrt (0 = aus; vorher fest 3)
 SL_ATR_MULT          = float(os.getenv("SL_ATR_MULT", "1.0"))         # v15.17: Stop mind. so viele Tagesspannen (Tages-ATR) vom Kurs; 0 = aus (fest 1.5% wie vorher)
@@ -1716,10 +1716,10 @@ def parse_hard_block(text):
         if _kw_treffer(t, kw):
             return detected_asset, "BUY", "BLOCK"
 
-    is_sell  = any(_kw_treffer(t, kw.strip()) for kw in SELL_KEYWORDS)
+    # v16.3: "sat/sell/verkaufen" sind jetzt Handelsbefehle (mit Rueckfrage), keine Sperre mehr
     is_block = any(_kw_treffer(t, kw, endung=kw in ("engelle", "blokla", "durdur")) for kw in BLOCK_KEYWORDS)
 
-    if is_sell or is_block:
+    if is_block:
         return detected_asset, "ALL", "BLOCK"
 
     return None, None, None
@@ -11359,6 +11359,459 @@ def handle_help(message):
         "/help        | help        — Bu menü"
     )
     bot.send_message(MY_CHAT_ID, mesaj)
+    try:
+        _bot_send_raw(MY_CHAT_ID, _FREI_HILFE.get(BOT_LANGUAGE, _FREI_HILFE["tr"]))   # v16.3
+    except Exception:
+        pass
+
+# ============================================================
+# v16.3 FREIE HANDELSBEFEHLE (Deutsch, Tuerkisch, Englisch)
+#   "altın al 300€", "kaufe Gold 0.05", "buy gold"      -> Kauf (Rueckfrage mit Tasten)
+#   "altın sat", "verkaufe Gold 50%", "sell gold"        -> offene Kaufposition schliessen,
+#                                                           ohne Kaufposition: Leerverkauf anbieten
+#   "gold short", "açığa sat altın", "leerverkauf gold"   -> Leerverkauf
+#   "altın kapat", "schließe Gold", "close gold"          -> alle Gold-Positionen schliessen
+#   "altın analiz", "analysiere Gold", "analyze gold"     -> eine Gremiums-Runde nur als Bericht
+#   Zusaetze: "SL 3620", "TP 3800" (auch stop/ziel/hedef), "300€", "50%", "yarısı/Hälfte/half"
+# Nichts wird ohne Tippen auf "Ausfuehren" gehandelt. Solche Befehle werden nicht als Notiz gespeichert.
+# ============================================================
+_FREI_ANALYSE = ["analiz et", "analiz", "incele", "analysiere", "analysieren", "analyse", "analyze", "analysis",
+                 "prüfe", "pruefe"]
+_FREI_SCHLIESSEN = ["kapat", "kapatın", "kapatin", "kapatalım", "kapatalim", "schließen", "schliessen", "schließe",
+                    "schliesse", "close", "zumachen"]
+_FREI_SHORT = ["açığa sat", "aciga sat", "leerverkauf", "leerverkaufen", "short", "shorten"]
+_FREI_KAUF = ["satın al", "satin al", "pozisyon aç", "pozisyon ac", "al", "alın", "alin", "alalım", "alalim",
+              "alım", "alim", "kauf", "kaufe", "kaufen", "buy", "long"]
+_FREI_VERKAUF = ["sat", "satalım", "satalim", "satış", "satis", "verkauf", "verkaufe", "verkaufen", "sell"]
+_FREI_HAELFTE = ["yarısı", "yarisi", "yarısını", "yarisini", "yarım", "yarim", "hälfte", "haelfte", "half"]
+_FREI_VIERTEL = ["çeyrek", "ceyrek", "çeyreğini", "viertel", "quarter"]
+_FREI_ALLES = ["hepsi", "hepsini", "tamamı", "tamamini", "tamamını", "alles", "alle", "all"]
+_FREI_MAX_WOERTER = 10
+_FREI_GUELTIG_SEK = 600
+_frei_offen = {}
+_frei_lock = threading.Lock()
+
+
+def _frei_zahl(s):
+    """'0,5' -> 0.5 | '1.000' -> 1000 | '300' -> 300"""
+    s = s.strip()
+    if re.fullmatch(r"[1-9]\d{0,2}([.,]\d{3})+", s):
+        return float(re.sub(r"[.,]", "", s))
+    return float(s.replace(",", "."))
+
+
+def _frei_wort(t, woerter, endung=False):
+    """Erstes passendes Wort (laengste zuerst), mit Wortgrenze."""
+    for w in sorted(woerter, key=len, reverse=True):
+        if _kw_treffer(t, w, endung=endung):
+            return w
+    return None
+
+
+def parse_frei_befehl(text):
+    """Freien Handelsbefehl erkennen. Rueckgabe dict oder None (dann ist es eine Notiz)."""
+    t = " ".join((text or "").lower().split())
+    if not t or t.startswith("/") or "?" in t or len(t.split()) > _FREI_MAX_WOERTER:
+        return None
+    sym = None
+    for kw in sorted(BLOCK_ASSET_KEYWORDS, key=len, reverse=True):
+        if _kw_treffer(t, kw, endung=kw in _BLOCK_ENDUNG_ERLAUBT):
+            sym = BLOCK_ASSET_KEYWORDS[kw]
+            break
+    if not sym:
+        return None
+    if _frei_wort(t, _FREI_ANALYSE, endung=True):
+        aktion = "ANALYSE"
+    elif _frei_wort(t, _FREI_SCHLIESSEN):
+        aktion = "CLOSE"
+    elif _frei_wort(t, _FREI_SHORT):
+        aktion = "SHORT"
+    elif _frei_wort(t, _FREI_KAUF):
+        aktion = "BUY"
+    elif _frei_wort(t, _FREI_VERKAUF):
+        aktion = "SELL"
+    else:
+        return None
+    cmd = {"sym": sym, "aktion": aktion, "eur": None, "size": None, "pct": None, "sl": None, "tp": None,
+           "text": text.strip()[:120]}
+    zahl = r"(\d+(?:[.,]\d+)*)"
+    rest = t
+    for feld, woerter in (("sl", r"sl|stop|stopp|zarar ?kes"), ("tp", r"tp|ziel|hedef|target|take ?profit")):
+        m = re.search(r"(?<!\w)(?:" + woerter + r")\s*[:=]?\s*" + zahl, rest)
+        if m:
+            cmd[feld] = _frei_zahl(m.group(1))
+            rest = rest[:m.start()] + " " + rest[m.end():]
+    m = re.search(zahl + r"\s*(?:€|eur|euro)(?!\w)", rest) or re.search(r"€\s*" + zahl, rest)
+    if m:
+        cmd["eur"] = _frei_zahl(m.group(1))
+        rest = rest[:m.start()] + " " + rest[m.end():]
+    m = re.search(zahl + r"\s*%", rest) or re.search(r"%\s*" + zahl, rest)
+    if m:
+        cmd["pct"] = _frei_zahl(m.group(1))
+        rest = rest[:m.start()] + " " + rest[m.end():]
+    elif _frei_wort(rest, _FREI_HAELFTE, endung=True):
+        cmd["pct"] = 50.0
+    elif _frei_wort(rest, _FREI_VIERTEL, endung=True):
+        cmd["pct"] = 25.0
+    elif _frei_wort(rest, _FREI_ALLES, endung=True):
+        cmd["pct"] = 100.0
+    m = re.search(r"(?<![\w.,])" + zahl + r"(?![\w.,])", rest)
+    if m:
+        cmd["size"] = _frei_zahl(m.group(1))
+    if cmd["pct"] is not None and not (0 < cmd["pct"] <= 100):
+        cmd["pct"] = None
+    return cmd
+
+
+def _frei_markt(h, epic):
+    r = requests.get(f"{CAPITAL_URL}/markets/{epic}", headers=h, timeout=10)
+    if r.status_code != 200:
+        raise ValueError(f"Kurs nicht lesbar (HTTP {r.status_code})")
+    sn = r.json().get("snapshot", {}) or {}
+    bid, ask = float(sn.get("bid", 0) or 0), float(sn.get("offer", 0) or 0)
+    if bid <= 0 and ask <= 0:
+        raise ValueError("kein Kurs")
+    if sn.get("marketStatus", "TRADEABLE") not in ("TRADEABLE", "OPEN"):
+        raise ValueError(f"Markt geschlossen ({sn.get('marketStatus')})")
+    return bid, ask, (bid + ask) / 2 if bid and ask else max(bid, ask)
+
+
+def _frei_eurusd(h):
+    try:
+        fx = requests.get(f"{CAPITAL_URL}/markets/EURUSD", headers=h, timeout=5).json()
+        v = float(fx.get("snapshot", {}).get("bid", 0) or 0)
+        return v if v > 0 else 1.08
+    except Exception:
+        return 1.08
+
+
+def _frei_plan_oeffnen(cmd, h, side):
+    sym = cmd["sym"]
+    cfg = MARKET_CONFIG[sym]
+    epic = cfg["epic"]
+    gesperrt, grund = check_hard_block(sym, side)
+    if gesperrt:
+        raise ValueError(f"{sym} {side} ist gesperrt ({grund[:60]}). Erst freigeben, z. B. '{sym.lower()} serbest'.")
+    bid, ask, kurs = _frei_markt(h, epic)
+    sl, tp = cmd.get("sl"), cmd.get("tp")
+    if sl is None or tp is None:
+        try:
+            _sl, _atr, _ = get_atr_stop_loss(epic, kurs, side)
+        except Exception:
+            _sl = kurs * (0.985 if side == "BUY" else 1.015)
+        sl = sl if sl is not None else _sl
+        if tp is None:
+            tp = kurs + (kurs - sl) * 3 if side == "BUY" else kurs - (sl - kurs) * 3
+    vz = 1 if side == "BUY" else -1
+    if vz * (kurs - sl) <= 0:
+        raise ValueError(f"Stop {sl:g} liegt auf der falschen Seite des Kurses {kurs:g}.")
+    if tp and vz * (tp - kurs) <= 0:
+        raise ValueError(f"Ziel {tp:g} liegt auf der falschen Seite des Kurses {kurs:g}.")
+    min_size = cfg.get("min_size", 0.01)
+    if cmd.get("size"):
+        units, herkunft = round(float(cmd["size"]), 6), "Größe"
+    elif cmd.get("eur"):
+        units, herkunft = safe_trade_size(str(cmd["eur"]), cfg, epic, is_manual=True), f"{cmd['eur']:g} €"
+    else:
+        units, herkunft = safe_trade_size("0", cfg, epic, is_manual=False), "automatische Größe"
+    if not units or units <= 0:
+        raise ValueError("Größe konnte nicht berechnet werden (Mindestgröße über den .env-Grenzen?).")
+    if units < min_size:
+        raise ValueError(f"Größe {units:g} unter der Mindestgröße {min_size:g} für {sym}.")
+    fx = 1.0 if epic.upper().endswith("EUR") else _frei_eurusd(h)
+    wert = units * kurs / fx
+    risiko = units * abs(kurs - sl) / fx
+    acc = get_account_info(h) or {}
+    depot = float(acc.get("toplam", 0) or 0)
+    if depot > 0 and wert > depot * 0.5:
+        raise ValueError(f"Zu groß: {units:g} × {kurs:g} ≈ {wert:,.0f} € Positionswert, erlaubt sind höchstens "
+                         f"50 % des Depots ({depot * 0.5:,.0f} €). Tipp: Betrag in Euro angeben, z. B. "
+                         f"'{sym.lower()} al 300€'.")
+    text = (f"{'🟢 KAUF' if side == 'BUY' else '🔴 LEERVERKAUF'} {sym} ({herkunft})\n"
+            f"Größe: {units:g} | Kurs ≈ {kurs:g}\n"
+            f"Positionswert ≈ {wert:,.2f} €\n"
+            f"Stop: {sl:g} → Risiko ≈ {risiko:,.2f} €\n"
+            f"Ziel: {tp:g}" + (f" → möglicher Gewinn ≈ {units * abs(tp - kurs) / fx:,.2f} €" if tp else ""))
+    return {"art": "OEFFNEN", "sym": sym, "side": side, "units": units, "sl": round(sl, 5),
+            "tp": round(tp, 5) if tp else None, "kurs": kurs, "bid": bid, "ask": ask,
+            "herkunft": herkunft, "text": text}
+
+
+def _frei_plan_schliessen(cmd, h, nur_richtung=None):
+    sym = cmd["sym"]
+    epic = MARKET_CONFIG[sym]["epic"]
+    pos = [p for p in (get_positions(h) or []) if p["market"]["epic"] == epic
+           and (nur_richtung is None or p["position"]["direction"] == nur_richtung)]
+    if not pos:
+        return None
+    richtungen = {p["position"]["direction"] for p in pos}
+    summe = sum(float(p["position"].get("size", 0) or 0) for p in pos)
+    upl = sum(float(p["position"].get("upl", 0) or 0) for p in pos)
+    pct = cmd.get("pct")
+    menge = None
+    if cmd.get("size") and cmd["size"] < summe:
+        menge = round(float(cmd["size"]), 6)
+    elif pct and pct < 100:
+        menge = round(summe * pct / 100.0, 6)
+    if menge is not None and len(richtungen) > 1:
+        raise ValueError(f"{sym} hat Kauf- und Verkaufspositionen - Teilschließen nur je Richtung. "
+                         f"Schreib z. B. 'verkaufe {sym.lower()} 50%' (schließt Käufe).")
+    min_size = MARKET_CONFIG[sym].get("min_size", 0.01)
+    if menge is not None and menge < min_size:
+        raise ValueError(f"Teilmenge {menge:g} unter der Mindestgröße {min_size:g}.")
+    rtxt = "/".join(sorted(richtungen))
+    if menge is None:
+        text = (f"❎ SCHLIESSEN {sym} {rtxt}: alle {len(pos)} Position(en), Größe {summe:g}\n"
+                f"Offenes Ergebnis jetzt ≈ {upl:+.2f}")
+    else:
+        text = (f"❎ TEIL-SCHLIESSEN {sym} {rtxt}: {menge:g} von {summe:g} ({menge / summe * 100:.0f} %)\n"
+                f"Offenes Ergebnis der ganzen Position jetzt ≈ {upl:+.2f}")
+    return {"art": "SCHLIESSEN", "sym": sym, "epic": epic, "deals": [p["position"]["dealId"] for p in pos],
+            "richtung": next(iter(richtungen)), "menge": menge, "text": text}
+
+
+def frei_plan(cmd, h):
+    """Was wuerde der Befehl tun? Rueckgabe Plan-dict (mit 'text') - es wird noch nichts gehandelt."""
+    sym = cmd["sym"]
+    if sym not in MARKET_CONFIG:
+        raise ValueError(f"{sym} ist nicht in MARKET_CONFIG (nicht handelbar).")
+    a = cmd["aktion"]
+    if a == "BUY":
+        return _frei_plan_oeffnen(cmd, h, "BUY")
+    if a == "SHORT":
+        return _frei_plan_oeffnen(cmd, h, "SELL")
+    if a == "CLOSE":
+        p = _frei_plan_schliessen(cmd, h)
+        if not p:
+            raise ValueError(f"Keine offene {sym}-Position.")
+        return p
+    if a == "SELL":
+        p = _frei_plan_schliessen(cmd, h, nur_richtung="BUY")
+        if p:
+            return p
+        p = _frei_plan_oeffnen(cmd, h, "SELL")
+        p["text"] = f"ℹ️ Keine {sym}-Kaufposition zum Verkaufen offen. Stattdessen:\n" + p["text"]
+        return p
+    raise ValueError(f"unbekannte Aktion {a}")
+
+
+def _manuell_oeffnen(sym, side, units, sl_float, tp_float, current_price, bid, ask, groesse_text, h=None):
+    """Order senden und wie /manuell nachbereiten (Pyramiding-Stufe, Trailing, DB). Rueckgabe Text."""
+    cfg = MARKET_CONFIG[sym]
+    epic = cfg["epic"]
+    h = h or capital_session.get_headers()
+    if not h:
+        return "❌ API Verbindung fehlgeschlagen"
+    payload = {"epic": epic, "direction": side, "size": units, "type": "MARKET", "stopLevel": sl_float}
+    if tp_float:
+        payload["profitLevel"] = tp_float
+    if not konto_vor_order():
+        return f"⛔ {sym}: Konto {CAPITAL_ACCOUNT_ID} nicht gesichert - keine Order"
+    r = requests.post(f"{CAPITAL_URL}/positions", json=payload, headers=h, timeout=10)
+    if r.status_code != 200:
+        logging.error(f"Manuell Trade Fehler {sym}: {r.text[:200]}")
+        return f"❌ Trade fehlgeschlagen: {r.text[:200]}"
+    try:
+        ref = r.json().get("dealReference")
+        if ref:
+            time.sleep(1)
+            cf = requests.get(f"{CAPITAL_URL}/confirms/{ref}", headers=h, timeout=10)
+            if cf.status_code == 200 and cf.json().get("dealStatus") == "REJECTED":
+                return f"❌ Order abgelehnt: {str(cf.json().get('rejectReason', cf.text))[:150]}"
+    except Exception:
+        pass
+    eigene_deal_merken(h, r, sym, side, "manuell")
+    set_pyramiding_stufe(epic, 1)
+    try:
+        trail_state = _load_trailing_state()
+        trail_state["peak_" + epic + "_" + side] = {"value": round(current_price, 5),
+                                                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        _save_trailing_state(trail_state)
+    except Exception as te:
+        logging.warning(f"Trailing init: {te}")
+    try:
+        db_open_trade(symbol=sym, direction=side, size=units, entry_price=current_price, sl=sl_float, tp=tp_float,
+                      spread=abs(ask - bid) if ask and bid else 0, gremium_score="MANUELL",
+                      macro_regime="MANUELL", fear_greed=50)
+    except Exception as db_e:
+        logging.warning(f"DB Trade: {db_e}")
+    logging.info(f"MANUELL {sym} {side} {units} units @ {current_price}")
+    return (f"✅ MANUELLER TRADE eröffnet!\nSymbol: {sym} {side}\nGröße: {units} units ({groesse_text})\n"
+            f"Entry: {current_price}\nSL: {sl_float} | TP: {tp_float}\nPyramiding-Stufe: 1")
+
+
+def frei_ausfuehren(plan):
+    """Nach Bestaetigung: Plan ausfuehren. Rueckgabe Text."""
+    h = capital_session.get_headers()
+    if not h:
+        return "❌ API Verbindung fehlgeschlagen"
+    if plan["art"] == "OEFFNEN":
+        return _manuell_oeffnen(plan["sym"], plan["side"], plan["units"], plan["sl"], plan["tp"], plan["kurs"],
+                                plan["bid"], plan["ask"], plan["herkunft"], h=h)
+    if plan["menge"] is not None:
+        ok, menge, info = partial_close_position(h, plan["epic"], plan["richtung"], plan["menge"])
+        return (f"✅ {plan['sym']}: {menge:g} geschlossen." if ok
+                else f"❌ {plan['sym']}: Teil-Schließen nicht möglich ({info}).")
+    if not konto_vor_order():
+        return f"⛔ {plan['sym']}: Konto {CAPITAL_ACCOUNT_ID} nicht gesichert - nichts geschlossen"
+    zu, fehler = 0, []
+    for deal in plan["deals"]:
+        try:
+            r = requests.delete(f"{CAPITAL_URL}/positions/{deal}", headers=h, timeout=10)
+            if r.status_code in (200, 201, 204):
+                zu += 1
+            else:
+                fehler.append(f"{deal}: HTTP {r.status_code}")
+        except Exception as e:
+            fehler.append(f"{deal}: {e}")
+    return (f"✅ {plan['sym']}: {zu} von {len(plan['deals'])} Position(en) geschlossen."
+            + (f"\n⚠️ {'; '.join(fehler)[:200]}" if fehler else ""))
+
+
+def frei_analyse(sym):
+    """Eine Gremiums-Runde nur fuer diesen Markt - Bericht, kein Trade, nichts gespeichert."""
+    if _NG is None or _GD is None:
+        _bot_send_raw(MY_CHAT_ID, "⚠️ nexus_gremium.py fehlt - Analyse nicht möglich. Alternative: "
+                                  f"/deepdive {sym} HOUR_4 30")
+        return
+    if not _GREMIUM_LOCK.acquire(blocking=False):
+        _bot_send_raw(MY_CHAT_ID, "⏳ Das Gremium berät gerade - bitte in ein paar Minuten nochmal.")
+        return
+    try:
+        need = len(_NG.MITGLIEDER) + (0 if GREMIUM_VORSITZ == "claude" else 1)
+        if ki_budget.frei() < need:
+            _bot_send_raw(MY_CHAT_ID, f"⚠️ KI-Budget: {ki_budget.benutzt()}/{ki_budget.max} in dieser Stunde benutzt, "
+                                      f"die Analyse braucht {need}. Später nochmal.")
+            return
+        h = capital_session.get_headers()
+        if not h:
+            _bot_send_raw(MY_CHAT_ID, "❌ API Verbindung fehlgeschlagen")
+            return
+        cfg = MARKET_CONFIG[sym]
+        positionen = get_positions(h) or []
+        acc = get_account_info(h) or {}
+        try:
+            sinyal, guc, aciklama = technical_confluence(cfg["epic"])
+        except Exception:
+            sinyal, guc, aciklama = "BEKLE", 0, ""
+        try:
+            skor = berechne_signal_score(sym, cfg["epic"])
+        except Exception:
+            skor = {"score": 0, "max_score": 5, "details": ""}
+        tech = {"sinyal": sinyal, "guc": guc, "aciklama": aciklama, "skor": skor}
+        dossier, info = _gremium_dossier(sym, cfg, h, _gremium_makro(), positionen, acc, tech)
+        lang = _gremium_lang()
+        stimmen = _NG.abstimmen(sym, dossier, _gremium_ask, parallel=GREMIUM_PARALLEL, frist=GREMIUM_FRIST,
+                                lang=lang, min_antworten=GREMIUM_MIN_ANTWORTEN)
+        gewichte = _GD.gewichte() if GREMIUM_GEWICHTUNG else None
+        mehrheit = GREMIUM_MEHRHEIT_KRYPTO if (is_crypto(sym) and is_weekend()) else GREMIUM_MEHRHEIT
+        erg = _NG.auswerten(stimmen, gewichte, mehrheit=mehrheit, min_antworten=GREMIUM_MIN_ANTWORTEN,
+                            lern=(GREMIUM_LERN_RICHTUNG, GREMIUM_LERN_GEGEN) if gremium_lernmodus() else None)
+        vs = None
+        if erg["richtung"]:
+            vs = _NG.vorsitz(sym, erg["richtung"], dossier, stimmen, erg, _gremium_vorsitz_ask, kurs=info["kurs"],
+                             lang=lang)
+            vs["wer"] = _gremium_vorsitz_name()
+        logging.info(f"FREI-ANALYSE {sym}: {erg['richtung'] or '-'} | BUY {erg['gewicht']['BUY']:.1f} "
+                     f"SELL {erg['gewicht']['SELL']:.1f} BEKLE {erg['gewicht']['BEKLE']:.1f}")
+        _gremium_senden("🔎 ANALYSE AUF WUNSCH - nur Bericht, es wird nichts gehandelt\n\n"
+                        + _NG.bericht(sym, stimmen, erg, vs, lang=lang, kurs=info["kurs"], tech=info["tech"],
+                                      min_antworten=GREMIUM_MIN_ANTWORTEN))
+    except Exception as e:
+        logging.warning(f"FREI-ANALYSE {sym}: {e}")
+        _bot_send_raw(MY_CHAT_ID, f"❌ Analyse {sym}: {str(e)[:200]}")
+    finally:
+        _GREMIUM_LOCK.release()
+
+
+def frei_befehl_behandeln(cmd):
+    """Aus handle_free_text: Analyse starten oder Plan + Tasten senden."""
+    if cmd["aktion"] == "ANALYSE":
+        need = len(_NG.MITGLIEDER) if _NG else 11
+        _bot_send_raw(MY_CHAT_ID, f"🔎 Analyse {cmd['sym']} läuft ({need} Mentoren + Vorsitz, 1-3 Minuten) ...")
+        threading.Thread(target=frei_analyse, args=(cmd["sym"],), daemon=True).start()
+        return
+    h = capital_session.get_headers()
+    if not h:
+        _bot_send_raw(MY_CHAT_ID, "❌ API Verbindung fehlgeschlagen")
+        return
+    try:
+        plan = frei_plan(cmd, h)
+    except Exception as e:
+        _bot_send_raw(MY_CHAT_ID, f"⚠️ {cmd['text']}\n{str(e)[:300]}")
+        return
+    pid = f"{int(time.time() * 1000) % 100000000:x}"
+    with _frei_lock:
+        for k in [k for k, v in _frei_offen.items() if time.time() - v["ts"] > _FREI_GUELTIG_SEK]:
+            _frei_offen.pop(k, None)
+        _frei_offen[pid] = {"ts": time.time(), "plan": plan}
+    kb = telebot.types.InlineKeyboardMarkup()
+    kb.row(telebot.types.InlineKeyboardButton("✅ Ausführen", callback_data=f"frei_ok_{pid}"),
+           telebot.types.InlineKeyboardButton("❌ Abbrechen", callback_data=f"frei_no_{pid}"))
+    _bot_send_raw(MY_CHAT_ID, plan["text"] + f"\n\nGültig {_FREI_GUELTIG_SEK // 60} Minuten.", reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda call: (call.data or "").startswith("frei_"))
+def handle_frei_callback(call):
+    try:
+        _, antwort, pid = call.data.split("_", 2)
+    except Exception:
+        bot.answer_callback_query(call.id, "Ungültig")
+        return
+    with _frei_lock:
+        eintrag = _frei_offen.pop(pid, None)     # nur einmal ausfuehrbar
+    alt = call.message.text or ""
+    if not eintrag or time.time() - eintrag["ts"] > _FREI_GUELTIG_SEK:
+        bot.answer_callback_query(call.id, "Abgelaufen - bitte neu schreiben", show_alert=True)
+        try:
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                  text=alt + "\n\n>> abgelaufen")
+        except Exception:
+            pass
+        return
+    if antwort != "ok":
+        bot.answer_callback_query(call.id, "Abgebrochen")
+        try:
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                  text=alt + "\n\n>> abgebrochen")
+        except Exception:
+            pass
+        return
+    bot.answer_callback_query(call.id, "Wird ausgeführt ...")
+    try:
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                              text=alt + "\n\n>> wird ausgeführt ...")
+    except Exception:
+        pass
+    try:
+        ergebnis = frei_ausfuehren(eintrag["plan"])
+    except Exception as e:
+        ergebnis = f"❌ Fehler: {str(e)[:200]}"
+    logging.info(f"FREI-BEFEHL {eintrag['plan']['art']} {eintrag['plan']['sym']}: {ergebnis[:120]}")
+    _bot_send_raw(MY_CHAT_ID, ergebnis)
+
+
+_FREI_HILFE = {
+    "de": ("💬 FREIE BEFEHLE (ohne /, Rückfrage mit Tasten vor jeder Order)\n"
+           "kaufe Gold 300€ · kaufe Gold 0,05 · kaufe Gold (automatische Größe)\n"
+           "verkaufe Gold · verkaufe Gold 50% · Gold short · schließe Gold\n"
+           "analysiere Gold (Gremium-Runde, nur Bericht)\n"
+           "Zusätze: SL 3620 TP 3800\n"
+           "Sperren: 'Gold nicht handeln', 'Gold nicht kaufen', freigeben: 'Gold freigeben'"),
+    "tr": ("💬 SERBEST KOMUTLAR (/ olmadan, her emirden önce butonla onay)\n"
+           "altın al 300€ · altın al 0,05 · altın al (otomatik büyüklük)\n"
+           "altın sat · altın sat yarısı · altın short · altın kapat\n"
+           "altın analiz (kurul turu, sadece rapor)\n"
+           "Ek: SL 3620 TP 3800\n"
+           "Blok: 'altını alma', 'altın satma', 'gold nicht handeln', kaldır: 'altın serbest'"),
+    "en": ("💬 FREE COMMANDS (no /, confirmation buttons before every order)\n"
+           "buy gold 300€ · buy gold 0.05 · buy gold (automatic size)\n"
+           "sell gold · sell gold 50% · gold short · close gold\n"
+           "analyze gold (committee round, report only)\n"
+           "Extras: SL 3620 TP 3800\n"
+           "Blocks: 'gold nicht handeln', unblock: 'gold unblock'"),
+}
+
 
 @bot.message_handler(commands=CMD('manuell'))
 def handle_manuell(message):
@@ -11462,16 +11915,6 @@ def handle_manuell(message):
         bot.send_message(MY_CHAT_ID, f"❌ Size-Berechnung fehlgeschlagen: {e}")
         return
     
-    # Position eröffnen
-    payload = {
-        "epic": epic,
-        "direction": side,
-        "size": units,
-        "type": "MARKET",
-        "stopLevel": sl_float,
-        "profitLevel": tp_float
-    }
-    
     bot.send_message(MY_CHAT_ID,
         f"⚡ MANUELLER TRADE wird ausgeführt:\n"
         f"Symbol: {sym}\n"
@@ -11480,59 +11923,12 @@ def handle_manuell(message):
         f"Preis: {current_price}\n"
         f"SL: {sl_float}\n"
         f"TP: {tp_float}")
-    
     try:
-        if not konto_vor_order():
-            bot.send_message(MY_CHAT_ID, f"⛔ Manuell {sym}: Konto {CAPITAL_ACCOUNT_ID} nicht gesichert - keine Order")
-            return
-        r = requests.post(f"{CAPITAL_URL}/positions", json=payload, headers=h, timeout=10)
-        if r.status_code == 200:
-            eigene_deal_merken(h, r, sym, side, "manuell")
-            # Pyramiding-Stufe auf 1 setzen
-            set_pyramiding_stufe(epic, 1)
-            
-            # Trailing SL Peak initialisieren
-            try:
-                trail_state = _load_trailing_state()
-                peak_key = "peak_" + epic + "_" + side
-                trail_state[peak_key] = {
-                    "value": round(current_price, 5),
-                    "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                _save_trailing_state(trail_state)
-            except Exception as te:
-                logging.warning(f"Trailing init: {te}")
-            
-            # DB-Eintrag
-            try:
-                db_open_trade(
-                    symbol=sym, direction=side, size=units,
-                    entry_price=current_price, sl=sl_float, tp=tp_float,
-                    spread=abs(ask - bid) if ask and bid else 0,
-                    gremium_score="MANUELL",
-                    macro_regime="MANUELL",
-                    fear_greed=50,
-                )
-            except Exception as db_e:
-                logging.warning(f"DB Trade: {db_e}")
-            
-            msg = (
-                f"✅ MANUELLER TRADE eröffnet!\n"
-                f"Symbol: {sym} {side}\n"
-                f"Größe: {units} units ({size_eur}€)\n"
-                f"Entry: {current_price}\n"
-                f"SL: {sl_float} | TP: {tp_float}\n"
-                f"Pyramiding-Stufe: 1"
-            )
-            bot.send_message(MY_CHAT_ID, msg)
-            logging.info(f"MANUELL {sym} {side} {units} units @ {current_price}")
-        else:
-            bot.send_message(MY_CHAT_ID, f"❌ Trade fehlgeschlagen: {r.text[:200]}")
-            logging.error(f"Manuell Trade Fehler {sym}: {r.text[:200]}")
+        bot.send_message(MY_CHAT_ID, _manuell_oeffnen(sym, side, units, sl_float, tp_float, current_price, bid, ask,
+                                                      f"{size_eur}€", h=h))
     except Exception as e:
         bot.send_message(MY_CHAT_ID, f"❌ Exception: {e}")
         logging.error(f"Manuell Exception {sym}: {e}")
-
 
 # ============================================================
 # FREIE TEXTNACHRICHTEN (ohne /) - NEU
@@ -11571,7 +11967,7 @@ def handle_unut(message):
     except Exception as e:
         bot.send_message(MY_CHAT_ID, "Silme hatasi: " + str(e))
 
-@bot.message_handler(commands=["schatten", "shadow", "golge", "gölge"])
+@bot.message_handler(commands=CMD('schatten'))
 def handle_schatten(message):
     """v16.2: /schatten - Vergleich der vier Ausstiegs-Varianten."""
     try:
@@ -11621,6 +12017,15 @@ def handle_free_text(message):
     if matched_handler:
         matched_handler(message)
         return
+    # v16.3: freie Handelsbefehle ("altın al 300€", "verkaufe Gold", "analyze gold") - Sperren gehen vor
+    try:
+        if not parse_hard_block(user_text)[2]:
+            _frei = parse_frei_befehl(user_text)
+            if _frei:
+                frei_befehl_behandeln(_frei)
+                return
+    except Exception as _fe:
+        logging.warning(f"Freier Befehl: {_fe}")
     try:
         reply_lines = []
 
